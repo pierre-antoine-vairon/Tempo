@@ -8,6 +8,11 @@ type ShiftCardProps = {
   onSaveAssignments: (shiftId: number, workerIds: number[]) => Promise<void>;
 };
 
+type CoverageStatus = {
+  label: string;
+  color: string;
+};
+
 function parseSqlDateTime(dateTime: string) {
   return new Date(dateTime.replace(" ", "T"));
 }
@@ -17,6 +22,30 @@ function formatTime(dateTime: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parseSqlDateTime(dateTime));
+}
+
+function getCoverageStatus(
+  assignedCount: number,
+  requiredCount: number,
+): CoverageStatus {
+  if (assignedCount < requiredCount) {
+    return {
+      label: "Couverture incomplète",
+      color: "#b45309",
+    };
+  }
+
+  if (assignedCount > requiredCount) {
+    return {
+      label: "Sur-couvert",
+      color: "#2563eb",
+    };
+  }
+
+  return {
+    label: "Couverture OK",
+    color: "#166534",
+  };
 }
 
 export default function ShiftCard({
@@ -31,7 +60,12 @@ export default function ShiftCard({
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const assignedCount = assignments.length;
-  const isFullyStaffed = assignedCount >= shift.required_count;
+  const coverageStatus = getCoverageStatus(assignedCount, shift.required_count);
+
+  const selectedCoverageStatus = getCoverageStatus(
+    selectedWorkerIds.length,
+    shift.required_count,
+  );
 
   useEffect(() => {
     if (!isEditing) {
@@ -97,10 +131,11 @@ export default function ShiftCard({
         style={{
           marginTop: 4,
           fontSize: 14,
-          color: isFullyStaffed ? "#166534" : "#b45309",
+          color: coverageStatus.color,
+          fontWeight: 600,
         }}
       >
-        {isFullyStaffed ? "Couverture OK" : "Couverture incomplète"}
+        {coverageStatus.label}
       </div>
 
       <div style={{ marginTop: 8 }}>
@@ -124,7 +159,11 @@ export default function ShiftCard({
         <button
           type="button"
           onClick={() => setIsEditing(true)}
-          style={{ marginTop: 8 }}
+          style={{
+            marginTop: 10,
+            padding: "6px 10px",
+            cursor: "pointer",
+          }}
         >
           Modifier assignés
         </button>
@@ -140,11 +179,25 @@ export default function ShiftCard({
             background: "#f8fafc",
           }}
         >
-          <strong>Choisir les employés assignés :</strong>
+          <div>
+            <strong>Modifier les assignés</strong>
+          </div>
 
-          <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: 14,
+              color: selectedCoverageStatus.color,
+              fontWeight: 600,
+            }}
+          >
+            {selectedWorkerIds.length} sélectionné(s) / objectif{" "}
+            {shift.required_count} — {selectedCoverageStatus.label}
+          </div>
+
+          <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
             {workers.map((worker) => (
-              <label key={worker.id}>
+              <label key={worker.id} style={{ cursor: "pointer" }}>
                 <input
                   type="checkbox"
                   checked={selectedWorkerIds.includes(worker.id)}
