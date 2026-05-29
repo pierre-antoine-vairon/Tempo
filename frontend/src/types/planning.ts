@@ -32,3 +32,11 @@ export type Roster = {
   status: string;
   notes: string | null;
 };
+
+export type Worker = {
+  id: number;
+  org_id: number;
+  site_id: number | null;
+  first_name: string;
+  last_name: string;
+};

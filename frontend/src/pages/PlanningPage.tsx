@@ -272,3 +272,25 @@ export default function PlanningPage() {
     </div>
   );
 }
+
+/**
+ * TODO – Améliorations possibles de la vue Planning par employé
+ *
+ * - Ajouter un filtre global :
+ *   "Afficher seulement les employés assignés"
+ *
+ *   Objectif :
+ *   permettre au manager de masquer les employés qui n'ont aucun shift
+ *   sur le roster sélectionné, afin de rendre la lecture plus claire.
+ *
+ * - Ajouter une action individuelle par ligne employé :
+ *   icône "masquer / afficher" sur chaque ligne.
+ *
+ *   Objectif :
+ *   permettre au manager de cacher temporairement un employé de la vue
+ *   sans modifier les données du planning.
+ *
+ * Note :
+ * ces améliorations sont uniquement des aides d'affichage côté frontend.
+ * Elles ne doivent pas modifier les assignments, les workers ou les shifts.
+ */

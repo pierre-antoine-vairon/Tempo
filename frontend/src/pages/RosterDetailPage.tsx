@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiGet } from "../api";
+import { apiGet, apiPut } from "../api";
 import ShiftCard from "../components/ShiftCard";
-import type { Assignment, Roster, Shift } from "../types/planning";
+import type { Assignment, Roster, Shift, Worker } from "../types/planning";
 
 function parseSqlDateTime(dateTime: string) {
   return new Date(dateTime.replace(" ", "T"));
@@ -34,6 +34,7 @@ export default function RosterDetailPage() {
   const [roster, setRoster] = useState<Roster | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const assignmentsByShiftId = useMemo(() => {
@@ -78,15 +79,18 @@ export default function RosterDetailPage() {
           return;
         }
 
-        const [rosterData, shiftsData, assignmentsData] = await Promise.all([
-          apiGet<Roster>(`/rosters/${id}`),
-          apiGet<Shift[]>(`/rosters/${id}/shifts`),
-          apiGet<Assignment[]>(`/rosters/${id}/assignments`),
-        ]);
+        const [rosterData, shiftsData, assignmentsData, workersData] =
+          await Promise.all([
+            apiGet<Roster>(`/rosters/${id}`),
+            apiGet<Shift[]>(`/rosters/${id}/shifts`),
+            apiGet<Assignment[]>(`/rosters/${id}/assignments`),
+            apiGet<Worker[]>(`/workers`),
+          ]);
 
         setRoster(rosterData);
         setShifts(shiftsData);
         setAssignments(assignmentsData);
+        setWorkers(workersData);
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : "Erreur API";
         setError(message);
@@ -95,6 +99,25 @@ export default function RosterDetailPage() {
 
     loadRosterDetails();
   }, [id]);
+
+  async function handleSaveShiftAssignments(
+    shiftId: number,
+    workerIds: number[],
+  ) {
+    const updatedAssignments = await apiPut<
+      Assignment[],
+      { worker_ids: number[] }
+    >(`/shifts/${shiftId}/assignments`, {
+      worker_ids: workerIds,
+    });
+
+    setAssignments((currentAssignments) => [
+      ...currentAssignments.filter(
+        (assignment) => assignment.shift_id !== shiftId,
+      ),
+      ...updatedAssignments,
+    ]);
+  }
 
   return (
     <div>
@@ -126,6 +149,8 @@ export default function RosterDetailPage() {
                   key={shift.id}
                   shift={shift}
                   assignments={assignmentsByShiftId[shift.id] ?? []}
+                  workers={workers}
+                  onSaveAssignments={handleSaveShiftAssignments}
                 />
               ))}
             </div>
