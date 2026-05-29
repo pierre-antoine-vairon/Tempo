@@ -5,6 +5,8 @@ import SitesPage from "./pages/SitesPage";
 import WorkersPage from "./pages/WorkersPage";
 import RostersPage from "./pages/RostersPage";
 import RosterDetailPage from "./pages/RosterDetailPage";
+import PlanningPage from "./pages/PlanningPage";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -15,6 +17,7 @@ export default function App() {
           <Route path="/workers" element={<WorkersPage />} />
           <Route path="/rosters" element={<RostersPage />} />
           <Route path="/rosters/:id" element={<RosterDetailPage />} />
+          <Route path="/planning" element={<PlanningPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

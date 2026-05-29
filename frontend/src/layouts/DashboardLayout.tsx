@@ -58,6 +58,15 @@ export default function DashboardLayout() {
           >
             Rosters
           </NavLink>
+          <NavLink
+            to="/planning"
+            style={({ isActive }) => ({
+              ...linkStyle,
+              background: isActive ? "#f2f2f2" : "transparent",
+            })}
+          >
+            Planning
+          </NavLink>
         </nav>
       </aside>
 
