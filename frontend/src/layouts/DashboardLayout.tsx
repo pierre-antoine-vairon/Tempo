@@ -67,6 +67,15 @@ export default function DashboardLayout() {
           >
             Planning
           </NavLink>
+          <NavLink
+            to="/coverage"
+            style={({ isActive }) => ({
+              ...linkStyle,
+              background: isActive ? "#f2f2f2" : "transparent",
+            })}
+          >
+            Couverture
+          </NavLink>
         </nav>
       </aside>
 
