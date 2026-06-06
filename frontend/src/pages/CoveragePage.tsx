@@ -2,16 +2,24 @@ import { useEffect, useMemo, useState } from "react";
 import { apiGet } from "../api";
 import type { Assignment, Roster, Shift } from "../types/planning";
 
-type CoverageRow = {
-  shift: Shift;
+type CoverageInterval = {
+  dateKey: string;
+  startsAt: string;
+  endsAt: string;
+  requiredCount: number;
   assignedCount: number;
   delta: number;
   statusLabel: string;
   statusColor: string;
+  activeShiftIds: number[];
 };
 
 function parseSqlDateTime(dateTime: string) {
   return new Date(dateTime.replace(" ", "T"));
+}
+
+function getTimeValue(dateTime: string) {
+  return parseSqlDateTime(dateTime).getTime();
 }
 
 function getDateKey(dateTime: string) {
@@ -55,6 +63,109 @@ function getCoverageStatus(delta: number) {
   };
 }
 
+function getAssignmentsByShiftId(assignments: Assignment[]) {
+  const grouped: Record<number, Assignment[]> = {};
+
+  for (const assignment of assignments) {
+    if (!grouped[assignment.shift_id]) {
+      grouped[assignment.shift_id] = [];
+    }
+
+    grouped[assignment.shift_id].push(assignment);
+  }
+
+  return grouped;
+}
+
+function buildCoverageIntervals(
+  shifts: Shift[],
+  assignments: Assignment[],
+): CoverageInterval[] {
+  const assignmentsByShiftId = getAssignmentsByShiftId(assignments);
+  const shiftsByDate: Record<string, Shift[]> = {};
+
+  for (const shift of shifts) {
+    const dateKey = getDateKey(shift.starts_at);
+
+    if (!shiftsByDate[dateKey]) {
+      shiftsByDate[dateKey] = [];
+    }
+
+    shiftsByDate[dateKey].push(shift);
+  }
+
+  const intervals: CoverageInterval[] = [];
+
+  for (const [dateKey, dayShifts] of Object.entries(shiftsByDate)) {
+    const boundaries = Array.from(
+      new Set(
+        dayShifts.flatMap((shift) => [
+          getTimeValue(shift.starts_at),
+          getTimeValue(shift.ends_at),
+        ]),
+      ),
+    ).sort((a, b) => a - b);
+
+    for (let index = 0; index < boundaries.length - 1; index += 1) {
+      const intervalStart = boundaries[index];
+      const intervalEnd = boundaries[index + 1];
+
+      const activeShifts = dayShifts.filter((shift) => {
+        const shiftStart = getTimeValue(shift.starts_at);
+        const shiftEnd = getTimeValue(shift.ends_at);
+
+        return shiftStart <= intervalStart && shiftEnd >= intervalEnd;
+      });
+
+      if (activeShifts.length === 0) {
+        continue;
+      }
+
+      const requiredCount = activeShifts.reduce(
+        (sum, shift) => sum + shift.required_count,
+        0,
+      );
+
+      // MVP rule:
+      // If the same worker appears on multiple active shifts during the same interval,
+      // count the worker only once for this interval.
+      const assignedWorkerIds = new Set<number>();
+
+      for (const shift of activeShifts) {
+        const shiftAssignments = assignmentsByShiftId[shift.id] ?? [];
+
+        for (const assignment of shiftAssignments) {
+          assignedWorkerIds.add(assignment.worker_id);
+        }
+      }
+
+      const assignedCount = assignedWorkerIds.size;
+      const delta = assignedCount - requiredCount;
+      const status = getCoverageStatus(delta);
+
+      intervals.push({
+        dateKey,
+        startsAt: new Date(intervalStart).toISOString(),
+        endsAt: new Date(intervalEnd).toISOString(),
+        requiredCount,
+        assignedCount,
+        delta,
+        statusLabel: status.label,
+        statusColor: status.color,
+        activeShiftIds: activeShifts.map((shift) => shift.id),
+      });
+    }
+  }
+
+  return intervals.sort((a, b) => {
+    if (a.dateKey !== b.dateKey) {
+      return a.dateKey.localeCompare(b.dateKey);
+    }
+
+    return getTimeValue(a.startsAt) - getTimeValue(b.startsAt);
+  });
+}
+
 export default function CoveragePage() {
   const [rosters, setRosters] = useState<Roster[]>([]);
   const [selectedRosterId, setSelectedRosterId] = useState<number | null>(null);
@@ -65,46 +176,22 @@ export default function CoveragePage() {
   const selectedRoster =
     rosters.find((roster) => roster.id === selectedRosterId) ?? null;
 
-  const assignmentsByShiftId = useMemo(() => {
-    const grouped: Record<number, Assignment[]> = {};
+  const coverageIntervalsByDate = useMemo(() => {
+    const intervals = buildCoverageIntervals(shifts, assignments);
+    const grouped: Record<string, CoverageInterval[]> = {};
 
-    for (const assignment of assignments) {
-      if (!grouped[assignment.shift_id]) {
-        grouped[assignment.shift_id] = [];
+    for (const interval of intervals) {
+      if (!grouped[interval.dateKey]) {
+        grouped[interval.dateKey] = [];
       }
 
-      grouped[assignment.shift_id].push(assignment);
-    }
-
-    return grouped;
-  }, [assignments]);
-
-  const coverageRowsByDate = useMemo(() => {
-    const grouped: Record<string, CoverageRow[]> = {};
-
-    for (const shift of shifts) {
-      const assignedCount = assignmentsByShiftId[shift.id]?.length ?? 0;
-      const delta = assignedCount - shift.required_count;
-      const status = getCoverageStatus(delta);
-      const dateKey = getDateKey(shift.starts_at);
-
-      if (!grouped[dateKey]) {
-        grouped[dateKey] = [];
-      }
-
-      grouped[dateKey].push({
-        shift,
-        assignedCount,
-        delta,
-        statusLabel: status.label,
-        statusColor: status.color,
-      });
+      grouped[interval.dateKey].push(interval);
     }
 
     return Object.entries(grouped).sort(([dateA], [dateB]) =>
       dateA.localeCompare(dateB),
     );
-  }, [assignmentsByShiftId, shifts]);
+  }, [assignments, shifts]);
 
   useEffect(() => {
     async function loadRosters() {
@@ -157,8 +244,8 @@ export default function CoveragePage() {
       <h1>Couverture</h1>
 
       <p>
-        Vue analytique des besoins et assignations. Cette première version
-        compare chaque shift avec le nombre d’employés assignés.
+        Vue analytique des besoins et assignations. Cette version calcule des
+        tranches horaires à partir des shifts du roster.
       </p>
 
       {error && <p style={{ color: "red" }}>Erreur : {error}</p>}
@@ -188,14 +275,14 @@ export default function CoveragePage() {
         </p>
       )}
 
-      {coverageRowsByDate.length === 0 && !error && (
+      {coverageIntervalsByDate.length === 0 && !error && (
         <p>Aucune donnée de couverture trouvée.</p>
       )}
 
       <div style={{ display: "grid", gap: 20 }}>
-        {coverageRowsByDate.map(([dateKey, rows]) => (
+        {coverageIntervalsByDate.map(([dateKey, intervals]) => (
           <section key={dateKey}>
-            <h2>{formatDate(rows[0].shift.starts_at)}</h2>
+            <h2>{formatDate(intervals[0].startsAt)}</h2>
 
             <div style={{ overflowX: "auto" }}>
               <table
@@ -207,38 +294,47 @@ export default function CoveragePage() {
               >
                 <thead>
                   <tr>
-                    <th style={thStyle}>Tranche / shift</th>
+                    <th style={thStyle}>Tranche calculée</th>
                     <th style={thStyle}>Besoin</th>
-                    <th style={thStyle}>Assignés</th>
+                    <th style={thStyle}>Assignés uniques</th>
                     <th style={thStyle}>Écart</th>
                     <th style={thStyle}>Statut</th>
+                    <th style={thStyle}>Shifts actifs</th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.shift.id}>
+                  {intervals.map((interval) => (
+                    <tr
+                      key={`${interval.dateKey}-${interval.startsAt}-${interval.endsAt}`}
+                    >
                       <td style={tdStyle}>
-                        {formatTime(row.shift.starts_at)} →{" "}
-                        {formatTime(row.shift.ends_at)}
+                        {formatTime(interval.startsAt)} →{" "}
+                        {formatTime(interval.endsAt)}
                       </td>
 
-                      <td style={tdStyle}>{row.shift.required_count}</td>
+                      <td style={tdStyle}>{interval.requiredCount}</td>
 
-                      <td style={tdStyle}>{row.assignedCount}</td>
+                      <td style={tdStyle}>{interval.assignedCount}</td>
 
                       <td style={tdStyle}>
-                        {row.delta > 0 ? `+${row.delta}` : row.delta}
+                        {interval.delta > 0
+                          ? `+${interval.delta}`
+                          : interval.delta}
                       </td>
 
                       <td
                         style={{
                           ...tdStyle,
-                          color: row.statusColor,
+                          color: interval.statusColor,
                           fontWeight: 600,
                         }}
                       >
-                        {row.statusLabel}
+                        {interval.statusLabel}
+                      </td>
+
+                      <td style={tdStyle}>
+                        #{interval.activeShiftIds.join(", #")}
                       </td>
                     </tr>
                   ))}
@@ -250,10 +346,11 @@ export default function CoveragePage() {
       </div>
 
       {/* TODO:
-       * Future version:
-       * - split overlapping shifts into calculated coverage intervals
-       * - compare theoretical need vs real employee planning
-       * - show under-covered and over-covered periods independently from shifts
+       * Next iterations:
+       * - compare calculated need against a future individual employee planning model
+       * - show worker names per interval
+       * - add daily totals and weekly volume
+       * - move this calculation backend-side when it becomes a core business rule
        */}
     </div>
   );
