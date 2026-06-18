@@ -15,6 +15,15 @@ type CoverageInterval = {
   activeShiftIds: number[];
 };
 
+type DailySummary = {
+  dateKey: string;
+  requiredHours: number;
+  assignedHours: number;
+  deltaHours: number;
+  statusLabel: string;
+  statusColor: string;
+};
+
 function parseSqlDateTime(dateTime: string) {
   return new Date(dateTime.replace(" ", "T"));
 }
@@ -41,6 +50,19 @@ function formatTime(dateTime: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parseSqlDateTime(dateTime));
+}
+
+function formatHours(hours: number) {
+  const rounded = Math.round(hours * 100) / 100;
+
+  return `${rounded}h`;
+}
+
+function getIntervalDurationInHours(startsAt: string, endsAt: string) {
+  const start = parseSqlDateTime(startsAt).getTime();
+  const end = parseSqlDateTime(endsAt).getTime();
+
+  return (end - start) / (1000 * 60 * 60);
 }
 
 function getCoverageStatus(delta: number) {
@@ -140,7 +162,8 @@ function buildCoverageIntervals(
         }
       }
 
-      const assignedCount = assignedWorkerIds.size;
+      const workerIds = Array.from(assignedWorkerIds).sort((a, b) => a - b);
+      const assignedCount = workerIds.length;
       const delta = assignedCount - requiredCount;
       const status = getCoverageStatus(delta);
 
@@ -153,7 +176,7 @@ function buildCoverageIntervals(
         delta,
         statusLabel: status.label,
         statusColor: status.color,
-        workerIds: Array.from(assignedWorkerIds).sort((a, b) => a - b),
+        workerIds,
         activeShiftIds: activeShifts.map((shift) => shift.id),
       });
     }
@@ -165,6 +188,46 @@ function buildCoverageIntervals(
     }
 
     return getTimeValue(a.startsAt) - getTimeValue(b.startsAt);
+  });
+}
+
+function buildDailySummaries(intervals: CoverageInterval[]) {
+  const summariesByDate: Record<string, DailySummary> = {};
+
+  for (const interval of intervals) {
+    const durationHours = getIntervalDurationInHours(
+      interval.startsAt,
+      interval.endsAt,
+    );
+
+    const requiredHours = durationHours * interval.requiredCount;
+    const assignedHours = durationHours * interval.assignedCount;
+
+    if (!summariesByDate[interval.dateKey]) {
+      summariesByDate[interval.dateKey] = {
+        dateKey: interval.dateKey,
+        requiredHours: 0,
+        assignedHours: 0,
+        deltaHours: 0,
+        statusLabel: "Couverture OK",
+        statusColor: "#166534",
+      };
+    }
+
+    summariesByDate[interval.dateKey].requiredHours += requiredHours;
+    summariesByDate[interval.dateKey].assignedHours += assignedHours;
+  }
+
+  return Object.values(summariesByDate).map((summary) => {
+    const deltaHours = summary.assignedHours - summary.requiredHours;
+    const status = getCoverageStatus(deltaHours);
+
+    return {
+      ...summary,
+      deltaHours,
+      statusLabel: status.label,
+      statusColor: status.color,
+    };
   });
 }
 
@@ -189,11 +252,26 @@ export default function CoveragePage() {
     return map;
   }, [workers]);
 
+  const coverageIntervals = useMemo(
+    () => buildCoverageIntervals(shifts, assignments),
+    [assignments, shifts],
+  );
+
+  const dailySummariesByDate = useMemo(() => {
+    const summaries = buildDailySummaries(coverageIntervals);
+    const map: Record<string, DailySummary> = {};
+
+    for (const summary of summaries) {
+      map[summary.dateKey] = summary;
+    }
+
+    return map;
+  }, [coverageIntervals]);
+
   const coverageIntervalsByDate = useMemo(() => {
-    const intervals = buildCoverageIntervals(shifts, assignments);
     const grouped: Record<string, CoverageInterval[]> = {};
 
-    for (const interval of intervals) {
+    for (const interval of coverageIntervals) {
       if (!grouped[interval.dateKey]) {
         grouped[interval.dateKey] = [];
       }
@@ -204,7 +282,7 @@ export default function CoveragePage() {
     return Object.entries(grouped).sort(([dateA], [dateB]) =>
       dateA.localeCompare(dateB),
     );
-  }, [assignments, shifts]);
+  }, [coverageIntervals]);
 
   useEffect(() => {
     async function loadRosters() {
@@ -295,99 +373,149 @@ export default function CoveragePage() {
       )}
 
       <div style={{ display: "grid", gap: 20 }}>
-        {coverageIntervalsByDate.map(([dateKey, intervals]) => (
-          <section key={dateKey}>
-            <h2>{formatDate(intervals[0].startsAt)}</h2>
+        {coverageIntervalsByDate.map(([dateKey, intervals]) => {
+          const dailySummary = dailySummariesByDate[dateKey];
 
-            <div style={{ overflowX: "auto" }}>
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  background: "white",
-                }}
-              >
-                <thead>
-                  <tr>
-                    <th style={thStyle}>Tranche calculée</th>
-                    <th style={thStyle}>Besoin</th>
-                    <th style={thStyle}>Assignés uniques</th>
-                    <th style={thStyle}>Présents</th>
-                    <th style={thStyle}>Écart</th>
-                    <th style={thStyle}>Statut</th>
-                    <th style={thStyle}>Shifts actifs</th>
-                  </tr>
-                </thead>
+          return (
+            <section key={dateKey}>
+              <h2>{formatDate(intervals[0].startsAt)}</h2>
 
-                <tbody>
-                  {intervals.map((interval) => (
-                    <tr
-                      key={`${interval.dateKey}-${interval.startsAt}-${interval.endsAt}`}
-                    >
-                      <td style={tdStyle}>
-                        {formatTime(interval.startsAt)} →{" "}
-                        {formatTime(interval.endsAt)}
-                      </td>
+              {dailySummary && (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                    gap: 12,
+                    marginBottom: 16,
+                    padding: 16,
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    background: "#f9fafb",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>
+                      Besoin total
+                    </div>
+                    <strong>{formatHours(dailySummary.requiredHours)}</strong>
+                  </div>
 
-                      <td style={tdStyle}>{interval.requiredCount}</td>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>
+                      Assigné total
+                    </div>
+                    <strong>{formatHours(dailySummary.assignedHours)}</strong>
+                  </div>
 
-                      <td style={tdStyle}>{interval.assignedCount}</td>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>Écart</div>
+                    <strong>
+                      {dailySummary.deltaHours > 0
+                        ? `+${formatHours(dailySummary.deltaHours)}`
+                        : formatHours(dailySummary.deltaHours)}
+                    </strong>
+                  </div>
 
-                      <td style={tdStyle}>
-                        {interval.workerIds.length === 0 ? (
-                          <span style={{ color: "#6b7280" }}>
-                            Aucun assigné
-                          </span>
-                        ) : (
-                          <ul style={{ margin: 0, paddingLeft: 18 }}>
-                            {interval.workerIds.map((workerId) => {
-                              const worker = workersById[workerId];
+                  <div>
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>
+                      Statut journée
+                    </div>
+                    <strong style={{ color: dailySummary.statusColor }}>
+                      {dailySummary.statusLabel}
+                    </strong>
+                  </div>
+                </div>
+              )}
 
-                              return (
-                                <li key={workerId}>
-                                  {worker
-                                    ? `${worker.first_name} ${worker.last_name}`
-                                    : `Worker #${workerId}`}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        )}
-                      </td>
-
-                      <td style={tdStyle}>
-                        {interval.delta > 0
-                          ? `+${interval.delta}`
-                          : interval.delta}
-                      </td>
-
-                      <td
-                        style={{
-                          ...tdStyle,
-                          color: interval.statusColor,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {interval.statusLabel}
-                      </td>
-
-                      <td style={tdStyle}>
-                        #{interval.activeShiftIds.join(", #")}
-                      </td>
+              <div style={{ overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    background: "white",
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Tranche calculée</th>
+                      <th style={thStyle}>Besoin</th>
+                      <th style={thStyle}>Assignés uniques</th>
+                      <th style={thStyle}>Présents</th>
+                      <th style={thStyle}>Écart</th>
+                      <th style={thStyle}>Statut</th>
+                      <th style={thStyle}>Shifts actifs</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        ))}
+                  </thead>
+
+                  <tbody>
+                    {intervals.map((interval) => (
+                      <tr
+                        key={`${interval.dateKey}-${interval.startsAt}-${interval.endsAt}`}
+                      >
+                        <td style={tdStyle}>
+                          {formatTime(interval.startsAt)} →{" "}
+                          {formatTime(interval.endsAt)}
+                        </td>
+
+                        <td style={tdStyle}>{interval.requiredCount}</td>
+
+                        <td style={tdStyle}>{interval.assignedCount}</td>
+
+                        <td style={tdStyle}>
+                          {interval.workerIds.length === 0 ? (
+                            <span style={{ color: "#6b7280" }}>
+                              Aucun assigné
+                            </span>
+                          ) : (
+                            <ul style={{ margin: 0, paddingLeft: 18 }}>
+                              {interval.workerIds.map((workerId) => {
+                                const worker = workersById[workerId];
+
+                                return (
+                                  <li key={workerId}>
+                                    {worker
+                                      ? `${worker.first_name} ${worker.last_name}`
+                                      : `Worker #${workerId}`}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </td>
+
+                        <td style={tdStyle}>
+                          {interval.delta > 0
+                            ? `+${interval.delta}`
+                            : interval.delta}
+                        </td>
+
+                        <td
+                          style={{
+                            ...tdStyle,
+                            color: interval.statusColor,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {interval.statusLabel}
+                        </td>
+
+                        <td style={tdStyle}>
+                          #{interval.activeShiftIds.join(", #")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       {/* TODO:
        * Next iterations:
        * - compare calculated need against a future individual employee planning model
-       * - show worker names per interval
-       * - add daily totals and weekly volume
+       * - add weekly volume
        * - move this calculation backend-side when it becomes a core business rule
        */}
     </div>
