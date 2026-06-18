@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet } from "../api";
-import type { Assignment, Roster, Shift } from "../types/planning";
+import type { Assignment, Roster, Shift, Worker } from "../types/planning";
 
 type CoverageInterval = {
   dateKey: string;
@@ -11,6 +11,7 @@ type CoverageInterval = {
   delta: number;
   statusLabel: string;
   statusColor: string;
+  workerIds: number[];
   activeShiftIds: number[];
 };
 
@@ -152,6 +153,7 @@ function buildCoverageIntervals(
         delta,
         statusLabel: status.label,
         statusColor: status.color,
+        workerIds: Array.from(assignedWorkerIds).sort((a, b) => a - b),
         activeShiftIds: activeShifts.map((shift) => shift.id),
       });
     }
@@ -171,10 +173,21 @@ export default function CoveragePage() {
   const [selectedRosterId, setSelectedRosterId] = useState<number | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const selectedRoster =
     rosters.find((roster) => roster.id === selectedRosterId) ?? null;
+
+  const workersById = useMemo(() => {
+    const map: Record<number, Worker> = {};
+
+    for (const worker of workers) {
+      map[worker.id] = worker;
+    }
+
+    return map;
+  }, [workers]);
 
   const coverageIntervalsByDate = useMemo(() => {
     const intervals = buildCoverageIntervals(shifts, assignments);
@@ -223,13 +236,15 @@ export default function CoveragePage() {
           return;
         }
 
-        const [shiftsData, assignmentsData] = await Promise.all([
+        const [shiftsData, assignmentsData, workersData] = await Promise.all([
           apiGet<Shift[]>(`/rosters/${selectedRosterId}/shifts`),
           apiGet<Assignment[]>(`/rosters/${selectedRosterId}/assignments`),
+          apiGet<Worker[]>("/workers"),
         ]);
 
         setShifts(shiftsData);
         setAssignments(assignmentsData);
+        setWorkers(workersData);
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : "Erreur API";
         setError(message);
@@ -297,6 +312,7 @@ export default function CoveragePage() {
                     <th style={thStyle}>Tranche calculée</th>
                     <th style={thStyle}>Besoin</th>
                     <th style={thStyle}>Assignés uniques</th>
+                    <th style={thStyle}>Présents</th>
                     <th style={thStyle}>Écart</th>
                     <th style={thStyle}>Statut</th>
                     <th style={thStyle}>Shifts actifs</th>
@@ -316,6 +332,28 @@ export default function CoveragePage() {
                       <td style={tdStyle}>{interval.requiredCount}</td>
 
                       <td style={tdStyle}>{interval.assignedCount}</td>
+
+                      <td style={tdStyle}>
+                        {interval.workerIds.length === 0 ? (
+                          <span style={{ color: "#6b7280" }}>
+                            Aucun assigné
+                          </span>
+                        ) : (
+                          <ul style={{ margin: 0, paddingLeft: 18 }}>
+                            {interval.workerIds.map((workerId) => {
+                              const worker = workersById[workerId];
+
+                              return (
+                                <li key={workerId}>
+                                  {worker
+                                    ? `${worker.first_name} ${worker.last_name}`
+                                    : `Worker #${workerId}`}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </td>
 
                       <td style={tdStyle}>
                         {interval.delta > 0
