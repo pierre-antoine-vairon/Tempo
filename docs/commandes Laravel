@@ -1,0 +1,5 @@
+// COmmande à ne surtout pas faire :
+//php artisan migrate:fresh
+// php artisan migrate:refresh
+// php artisan migrate:reset
+// php artisan migrate:rollback

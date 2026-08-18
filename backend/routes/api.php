@@ -2,6 +2,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\ProductionController;
 
 Route::get('/health', function () {
     DB::selectOne('SELECT 1 as ok');
@@ -43,6 +44,12 @@ Route::get('/workers', function (Request $request) {
     return $q->orderBy('id')->get();
 });
 
+Route::prefix('production')
+    ->controller(ProductionController::class)
+    ->group(function () {
+        Route::get('/', 'index');
+        Route::put('/', 'update');
+    });
 
 Route::prefix('rosters')->group(function () {
     Route::get('/', function (Request $request) {

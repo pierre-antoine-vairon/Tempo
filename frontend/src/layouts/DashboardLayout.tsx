@@ -76,6 +76,15 @@ export default function DashboardLayout() {
           >
             Couverture
           </NavLink>
+          <NavLink
+            to="/production"
+            style={({ isActive }) => ({
+              ...linkStyle,
+              background: isActive ? "#f2f2f2" : "transparent",
+            })}
+          >
+            Production
+          </NavLink>
         </nav>
       </aside>
 
