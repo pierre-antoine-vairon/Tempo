@@ -712,6 +712,367 @@ class ProductionController extends Controller
     ]);
     }
 
+    public function updateDay(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    |
+    | IMPORTANT :
+    |
+    | stock_previous n'est volontairement PAS modifiable ici.
+    |
+    | Il est initialisé automatiquement par Tempo lors de
+    | l'ouverture de la journée.
+    |
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'date' => [
+            'required',
+            'date_format:Y-m-d',
+        ],
+
+        'entries' => [
+            'present',
+            'array',
+        ],
+
+        'entries.*.production_day_product_id' => [
+            'required',
+            'integer',
+            'min:1',
+            'distinct',
+        ],
+
+        'entries.*.production' => [
+            'present',
+            'nullable',
+            'integer',
+            'min:0',
+        ],
+
+        'entries.*.reproduction' => [
+            'present',
+            'nullable',
+            'integer',
+            'min:0',
+        ],
+
+        'entries.*.losses' => [
+            'present',
+            'nullable',
+            'integer',
+            'min:0',
+        ],
+
+        'entries.*.sales' => [
+            'present',
+            'nullable',
+            'integer',
+            'min:0',
+        ],
+
+        'entries.*.stock_end' => [
+            'present',
+            'nullable',
+            'integer',
+            'min:0',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
+    $entries = $validated['entries'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | 1. Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' => 'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 2. Recherche de la journée
+    |--------------------------------------------------------------------------
+    */
+
+    $day = DB::table('y_production_days')
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->where('production_date', $date)
+        ->first();
+
+    if (!$day) {
+        return response()->json([
+            'error' => 'production_day_not_found',
+            'message' => 'La feuille de production demandée n’existe pas.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 3. Vérification du statut
+    |--------------------------------------------------------------------------
+    |
+    | Une feuille n'est modifiable normalement que lorsqu'elle
+    | est en cours.
+    |
+    | Plus tard :
+    | - finished = terminée par l'équipe
+    | - closed   = clôturée par le manager
+    |
+    | Une réouverture manager remettra la feuille dans un état
+    | permettant à nouveau sa modification.
+    |
+    */
+
+    if ($day->status !== 'in_progress') {
+        return response()->json([
+            'error' => 'production_day_not_editable',
+            'message' => 'Cette feuille de production n’est plus modifiable.',
+            'status' => $day->status,
+        ], 409);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 4. IDs des produits de journée reçus
+    |--------------------------------------------------------------------------
+    */
+
+    $dayProductIds = collect($entries)
+        ->pluck('production_day_product_id')
+        ->map(fn ($id) => (int) $id)
+        ->values()
+        ->all();
+
+    /*
+    |--------------------------------------------------------------------------
+    | 5. Vérification des produits de la journée
+    |--------------------------------------------------------------------------
+    |
+    | Chaque ID reçu doit :
+    |
+    | - appartenir à l'organisation ;
+    | - appartenir au site ;
+    | - appartenir à CETTE journée ;
+    | - être inclus dans la feuille.
+    |
+    */
+
+    $dayProductsById = collect();
+
+    if (count($dayProductIds) > 0) {
+        $dayProductsById = DB::table(
+            'y_production_day_products as dp'
+        )
+
+            ->leftJoin(
+                'y_production_entries as e',
+                'e.production_day_product_id',
+                '=',
+                'dp.id'
+            )
+
+            ->where('dp.org_id', $orgId)
+            ->where('dp.site_id', $siteId)
+            ->where('dp.production_day_id', $day->id)
+
+            ->where('dp.is_included', 1)
+
+            ->whereIn(
+                'dp.id',
+                $dayProductIds
+            )
+
+            ->select([
+                'dp.id as production_day_product_id',
+                'dp.product_id',
+                'dp.conservation_snapshot',
+
+                'e.id as entry_id',
+            ])
+
+            ->get()
+
+            ->keyBy('production_day_product_id');
+
+        /*
+         * Tous les IDs envoyés doivent avoir été retrouvés.
+         */
+
+        if (
+            $dayProductsById->count()
+            !== count($dayProductIds)
+        ) {
+            return response()->json([
+                'error' => 'invalid_production_day_product',
+                'message' =>
+                    'Un ou plusieurs produits ne sont pas valides pour cette feuille.',
+            ], 422);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 6. Vérification de l'intégrité des entries
+    |--------------------------------------------------------------------------
+    |
+    | openDay() crée normalement toujours une entry pour chaque
+    | produit de journée.
+    |
+    | Si elle manque, ce n'est pas une erreur utilisateur :
+    | c'est une incohérence technique.
+    |
+    */
+
+    foreach ($dayProductsById as $dayProduct) {
+        if ($dayProduct->entry_id === null) {
+            return response()->json([
+                'error' => 'production_entry_missing',
+                'message' =>
+                    'Une ligne de production attendue est absente.',
+                'production_day_product_id' =>
+                    (int) $dayProduct->production_day_product_id,
+            ], 409);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 7. Enregistrement transactionnel
+    |--------------------------------------------------------------------------
+    */
+
+    $savedEntries = 0;
+    $now = now('UTC');
+
+    DB::transaction(function () use (
+        $entries,
+        $dayProductsById,
+        $orgId,
+        $now,
+        &$savedEntries
+    ) {
+        foreach ($entries as $entry) {
+
+            $productionDayProductId =
+                (int) $entry['production_day_product_id'];
+
+            $dayProduct = $dayProductsById->get(
+                $productionDayProductId
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Valeurs métier
+            |--------------------------------------------------------------------------
+            |
+            | Pendant in_progress :
+            |
+            | NULL = pas encore renseigné
+            | 0    = zéro explicitement renseigné
+            |
+            */
+
+            $values = [
+                'production' =>
+                    $entry['production'],
+
+                'reproduction' =>
+                    $entry['reproduction'],
+
+                'losses' =>
+                    $entry['losses'],
+
+                'sales' =>
+                    $entry['sales'],
+
+                'stock_end' =>
+                    $entry['stock_end'],
+            ];
+
+            /*
+            |--------------------------------------------------------------------------
+            | Mise à jour
+            |--------------------------------------------------------------------------
+            |
+            | stock_previous n'est volontairement PAS touché.
+            |
+            */
+
+            DB::table('y_production_entries')
+                ->where('id', $dayProduct->entry_id)
+                ->where('org_id', $orgId)
+                ->where(
+                    'production_day_product_id',
+                    $productionDayProductId
+                )
+                ->update([
+                    'production' =>
+                        $values['production'],
+
+                    'reproduction' =>
+                        $values['reproduction'],
+
+                    'losses' =>
+                        $values['losses'],
+
+                    'sales' =>
+                        $values['sales'],
+
+                    'stock_end' =>
+                        $values['stock_end'],
+
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
+
+            $savedEntries++;
+        }
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | 8. Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+
+        'day' => [
+            'id' => (int) $day->id,
+            'date' => $day->production_date,
+            'status' => $day->status,
+        ],
+
+        'saved_entries' => $savedEntries,
+    ]);
+    }
+
     public function openDay(Request $request)
     {
         /*

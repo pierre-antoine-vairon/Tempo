@@ -47,12 +47,16 @@ Route::get('/workers', function (Request $request) {
 Route::prefix('production')
     ->controller(ProductionController::class)
     ->group(function () {
+        // Anciennes routes, conservées temporairement
         Route::get('/', 'index');
         Route::put('/', 'update');
 
+        // Nouvelle architecture Production
         Route::get('/day', 'showDay');
+        Route::put('/day', 'updateDay');
         Route::post('/day/open', 'openDay');
-    });
+    }
+);
 
 Route::prefix('rosters')->group(function () {
     Route::get('/', function (Request $request) {
