@@ -55,6 +55,7 @@ Route::prefix('production')
         Route::get('/day', 'showDay');
         Route::put('/day', 'updateDay');
         Route::post('/day/open', 'openDay');
+        Route::post('/day/finish', 'finishDay');
     }
 );
 

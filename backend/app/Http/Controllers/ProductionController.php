@@ -1625,6 +1625,485 @@ class ProductionController extends Controller
             'day' => $day,
             'products_count' => $products->count(),
         ], 201);
+        });
+    }
+
+    public function finishDay(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    |
+    | confirm_zero_fill = false
+    | → Tempo contrôle et retourne les valeurs manquantes.
+    |
+    | confirm_zero_fill = true
+    | → les valeurs applicables encore NULL passent à 0,
+    |   puis la feuille passe à finished.
+    |
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'date' => [
+            'required',
+            'date_format:Y-m-d',
+        ],
+
+        'confirm_zero_fill' => [
+            'sometimes',
+            'boolean',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
+
+    $confirmZeroFill =
+        (bool) ($validated['confirm_zero_fill'] ?? false);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transaction
+    |--------------------------------------------------------------------------
+    */
+
+    return DB::transaction(function () use (
+        $orgId,
+        $siteId,
+        $date,
+        $confirmZeroFill
+    ) {
+
+        /*
+        |--------------------------------------------------------------------------
+        | 1. Recherche et verrouillage de la journée
+        |--------------------------------------------------------------------------
+        |
+        | lockForUpdate évite que deux utilisateurs terminent
+        | exactement la même feuille simultanément.
+        |
+        */
+
+        $day = DB::table('y_production_days')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('production_date', $date)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$day) {
+            return response()->json([
+                'error' => 'production_day_not_found',
+                'message' =>
+                    'La feuille de production demandée n’existe pas.',
+            ], 404);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 2. Idempotence
+        |--------------------------------------------------------------------------
+        |
+        | Si elle est déjà finished, on ne refait rien.
+        |
+        */
+
+        if ($day->status === 'finished') {
+            return response()->json([
+                'ok' => true,
+                'already_finished' => true,
+
+                'day' => [
+                    'id' => (int) $day->id,
+                    'date' => $day->production_date,
+                    'status' => $day->status,
+                ],
+            ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 3. Une journée clôturée ne peut pas être terminée
+        |--------------------------------------------------------------------------
+        |
+        | Elle devra d'abord être réouverte par un manager.
+        |
+        */
+
+        if ($day->status === 'closed') {
+            return response()->json([
+                'error' => 'production_day_closed',
+                'message' =>
+                    'Cette feuille est clôturée et doit être réouverte par un manager avant modification.',
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 4. Seule une journée en cours peut être terminée
+        |--------------------------------------------------------------------------
+        */
+
+        if ($day->status !== 'in_progress') {
+            return response()->json([
+                'error' => 'invalid_production_day_status',
+                'message' =>
+                    'Cette feuille ne peut pas être terminée dans son état actuel.',
+                'status' => $day->status,
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 5. Lecture des produits inclus + entries
+        |--------------------------------------------------------------------------
+        */
+
+        $rows = DB::table('y_production_day_products as dp')
+
+            ->leftJoin(
+                'y_production_entries as e',
+                'e.production_day_product_id',
+                '=',
+                'dp.id'
+            )
+
+            ->where('dp.org_id', $orgId)
+            ->where('dp.site_id', $siteId)
+            ->where('dp.production_day_id', $day->id)
+            ->where('dp.is_included', 1)
+
+            ->select([
+                'dp.id as production_day_product_id',
+                'dp.product_name_snapshot as product_name',
+                'dp.conservation_snapshot as conservation',
+
+                'e.id as entry_id',
+
+                'e.production',
+                'e.reproduction',
+                'e.losses',
+                'e.sales',
+                'e.stock_end',
+            ])
+
+            ->get();
+
+        /*
+        |--------------------------------------------------------------------------
+        | 6. Vérification technique : toutes les entries doivent exister
+        |--------------------------------------------------------------------------
+        */
+
+        foreach ($rows as $row) {
+            if ($row->entry_id === null) {
+                return response()->json([
+                    'error' => 'production_entry_missing',
+                    'message' =>
+                        'Une ligne de production attendue est absente.',
+
+                    'production_day_product_id' =>
+                        (int) $row->production_day_product_id,
+
+                    'product_name' =>
+                        $row->product_name,
+                ], 409);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 7. Détection des valeurs manquantes
+        |--------------------------------------------------------------------------
+        |
+        | Champs applicables / éditables en V1 :
+        |
+        | - production
+        | - reproduction
+        | - losses
+        | - sales
+        | - stock_end
+        |
+        | stock_previous n'est PAS concerné.
+        |
+        */
+
+        $editableFields = [
+            'production',
+            'reproduction',
+            'losses',
+            'sales',
+            'stock_end',
+        ];
+
+        $missingValuesCount = 0;
+
+        /*
+         * Liste détaillée disponible pour le frontend.
+         */
+        $missingProducts = [];
+
+        /*
+         * Warnings ciblés.
+         *
+         * Pour la V1 :
+         * stock_end manquant alors qu'une production
+         * ou reproduction a été renseignée.
+         */
+        $warnings = [];
+
+        foreach ($rows as $row) {
+
+            $productMissingFields = [];
+
+            foreach ($editableFields as $field) {
+                if ($row->{$field} === null) {
+                    $missingValuesCount++;
+                    $productMissingFields[] = $field;
+                }
+            }
+
+            /*
+             * On conserve le détail si le frontend veut
+             * un jour afficher la liste complète.
+             */
+            if (count($productMissingFields) > 0) {
+                $missingProducts[] = [
+                    'production_day_product_id' =>
+                        (int) $row->production_day_product_id,
+
+                    'product_name' =>
+                        $row->product_name,
+
+                    'fields' =>
+                        $productMissingFields,
+                ];
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Warning Stock fin
+            |--------------------------------------------------------------------------
+            |
+            | On attire spécifiquement l'attention si :
+            |
+            | production > 0
+            | OU reproduction > 0
+            |
+            | ET
+            |
+            | stock_end = NULL
+            |
+            */
+
+            $hasProductionActivity =
+                ((int) ($row->production ?? 0) > 0)
+                ||
+                ((int) ($row->reproduction ?? 0) > 0);
+
+            if (
+                $hasProductionActivity
+                && $row->stock_end === null
+            ) {
+                $warnings[] = [
+                    'code' =>
+                        'stock_end_missing_after_activity',
+
+                    'production_day_product_id' =>
+                        (int) $row->production_day_product_id,
+
+                    'product_name' =>
+                        $row->product_name,
+
+                    'message' =>
+                        'Le stock de fin doit être vérifié pour ce produit.',
+                ];
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 8. Confirmation nécessaire
+        |--------------------------------------------------------------------------
+        |
+        | Des valeurs sont encore NULL.
+        |
+        | On ne transforme JAMAIS silencieusement un NULL en 0.
+        |
+        */
+
+        if (
+            $missingValuesCount > 0
+            && !$confirmZeroFill
+        ) {
+            return response()->json([
+                'ok' => false,
+
+                'requires_confirmation' => true,
+
+                'message' =>
+                    $missingValuesCount
+                    . ' valeur(s) ne sont pas renseignée(s).',
+
+                'missing_values_count' =>
+                    $missingValuesCount,
+
+                /*
+                 * Disponible pour une UX détaillée plus tard.
+                 */
+                'missing_products' =>
+                    $missingProducts,
+
+                /*
+                 * Liste ciblée à mettre en avant dans l'interface.
+                 */
+                'warnings' =>
+                    $warnings,
+            ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 9. Si confirmation : NULL applicables → 0
+        |--------------------------------------------------------------------------
+        */
+
+        $now = now('UTC');
+        $zeroFilledValuesCount = 0;
+
+        if (
+            $missingValuesCount > 0
+            && $confirmZeroFill
+        ) {
+            foreach ($rows as $row) {
+
+                $updates = [];
+
+                foreach ($editableFields as $field) {
+                    if ($row->{$field} === null) {
+                        $updates[$field] = 0;
+                        $zeroFilledValuesCount++;
+                    }
+                }
+
+                if (count($updates) > 0) {
+                    $updates['updated_by'] = null;
+                    $updates['updated_at'] = $now;
+
+                    DB::table('y_production_entries')
+                        ->where('id', $row->entry_id)
+                        ->where('org_id', $orgId)
+                        ->update($updates);
+                }
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 10. Passage à finished
+        |--------------------------------------------------------------------------
+        */
+
+        DB::table('y_production_days')
+            ->where('id', $day->id)
+            ->where('org_id', $orgId)
+            ->update([
+                'status' => 'finished',
+
+                'finished_at' => $now,
+
+                /*
+                 * Pas encore d'authentification utilisateur.
+                 */
+                'finished_by' => null,
+
+                'updated_by' => null,
+                'updated_at' => $now,
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 11. Historique du changement de statut
+        |--------------------------------------------------------------------------
+        */
+
+        DB::table('y_production_day_status_history')
+            ->insert([
+                'org_id' => $orgId,
+                'site_id' => $siteId,
+
+                'production_day_id' =>
+                    $day->id,
+
+                'from_status' =>
+                    'in_progress',
+
+                'to_status' =>
+                    'finished',
+
+                'reason' =>
+                    null,
+
+                /*
+                 * Pas encore d'auth.
+                 */
+                'created_by' =>
+                    null,
+
+                'created_at' =>
+                    $now,
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 12. Réponse
+        |--------------------------------------------------------------------------
+        */
+
+        return response()->json([
+            'ok' => true,
+
+            'requires_confirmation' => false,
+
+            'day' => [
+                'id' => (int) $day->id,
+                'date' => $day->production_date,
+                'status' => 'finished',
+            ],
+
+            'zero_filled_values_count' =>
+                $zeroFilledValuesCount,
+
+            'warnings' =>
+                $warnings,
+        ]);
     });
     }
 }
