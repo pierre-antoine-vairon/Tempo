@@ -49,6 +49,8 @@ Route::prefix('production')
     ->group(function () {
         Route::get('/', 'index');
         Route::put('/', 'update');
+
+        Route::post('/day/open', 'openDay');
     });
 
 Route::prefix('rosters')->group(function () {
