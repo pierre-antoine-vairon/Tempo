@@ -481,6 +481,237 @@ class ProductionController extends Controller
     ]);
     }
 
+    public function showDay(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => ['required', 'integer', 'min:1'],
+        'date' => ['required', 'date_format:Y-m-d'],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' => 'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Recherche de la journée
+    |--------------------------------------------------------------------------
+    |
+    | IMPORTANT :
+    | GET ne crée aucune donnée.
+    |
+    | Si aucune journée n'existe :
+    | l'état fonctionnel est "À faire".
+    |
+    */
+
+    $day = DB::table('y_production_days')
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->where('production_date', $date)
+        ->first();
+
+    if (!$day) {
+        return response()->json([
+            'exists' => false,
+            'org_id' => $orgId,
+            'site_id' => $siteId,
+            'date' => $date,
+            'status' => 'not_started',
+            'products_count' => 0,
+            'products' => [],
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Lecture des produits de CETTE journée
+    |--------------------------------------------------------------------------
+    |
+    | On ne lit PAS y_products pour construire la feuille.
+    |
+    | La source historique est :
+    |
+    | y_production_day_products
+    |
+    | Les noms, catégories, familles, conservation et ordres
+    | viennent donc du snapshot de la journée.
+    |
+    */
+
+    $products = DB::table('y_production_day_products as dp')
+
+        ->leftJoin(
+            'y_production_entries as e',
+            'e.production_day_product_id',
+            '=',
+            'dp.id'
+        )
+
+        ->where('dp.org_id', $orgId)
+        ->where('dp.site_id', $siteId)
+        ->where('dp.production_day_id', $day->id)
+
+        ->select([
+            /*
+             * Identifiants
+             */
+            'dp.id as production_day_product_id',
+            'dp.product_id',
+            'dp.category_id',
+            'dp.family_id',
+
+            /*
+             * Snapshot historique
+             */
+            'dp.product_name_snapshot as name',
+            'dp.category_name_snapshot as category',
+            'dp.family_name_snapshot as family',
+            'dp.conservation_snapshot as conservation',
+
+            /*
+             * Présence dans la feuille
+             */
+            'dp.is_included',
+            'dp.excluded_at',
+            'dp.excluded_by',
+
+            /*
+             * Saisie
+             */
+            'e.id as entry_id',
+            'e.stock_previous',
+            'e.production',
+            'e.reproduction',
+            'e.losses',
+            'e.sales',
+            'e.stock_end',
+
+            /*
+             * Ordre historique
+             */
+            'dp.family_order_snapshot',
+            'dp.category_order_snapshot',
+            'dp.product_order_snapshot',
+        ])
+
+        ->orderBy('dp.family_order_snapshot')
+        ->orderBy('dp.family_name_snapshot')
+
+        ->orderBy('dp.category_order_snapshot')
+        ->orderBy('dp.category_name_snapshot')
+
+        ->orderBy('dp.product_order_snapshot')
+        ->orderBy('dp.product_name_snapshot')
+
+        ->get()
+
+        /*
+         * On stabilise les types numériques retournés à React.
+         */
+        ->map(function ($row) {
+            $row->production_day_product_id =
+                (int) $row->production_day_product_id;
+
+            $row->product_id =
+                (int) $row->product_id;
+
+            $row->category_id =
+                (int) $row->category_id;
+
+            $row->family_id =
+                (int) $row->family_id;
+
+            $row->is_included =
+                (bool) $row->is_included;
+
+            $row->entry_id =
+                $row->entry_id === null
+                    ? null
+                    : (int) $row->entry_id;
+
+            foreach ([
+                'stock_previous',
+                'production',
+                'reproduction',
+                'losses',
+                'sales',
+                'stock_end',
+            ] as $field) {
+                $row->{$field} =
+                    $row->{$field} === null
+                        ? null
+                        : (int) $row->{$field};
+            }
+
+            return $row;
+        });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'exists' => true,
+
+        'day' => [
+            'id' => (int) $day->id,
+            'org_id' => (int) $day->org_id,
+            'site_id' => (int) $day->site_id,
+
+            'production_date' => $day->production_date,
+            'status' => $day->status,
+
+            'started_at' => $day->started_at,
+            'started_by' => $day->started_by === null
+                ? null
+                : (int) $day->started_by,
+
+            'finished_at' => $day->finished_at,
+            'finished_by' => $day->finished_by === null
+                ? null
+                : (int) $day->finished_by,
+
+            'closed_at' => $day->closed_at,
+            'closed_by' => $day->closed_by === null
+                ? null
+                : (int) $day->closed_by,
+        ],
+
+        'products_count' => $products
+            ->where('is_included', true)
+            ->count(),
+
+        'products' => $products,
+    ]);
+    }
+
     public function openDay(Request $request)
     {
         /*
