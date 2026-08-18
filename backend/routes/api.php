@@ -54,8 +54,11 @@ Route::prefix('production')
         // Nouvelle architecture Production
         Route::get('/day', 'showDay');
         Route::put('/day', 'updateDay');
+
         Route::post('/day/open', 'openDay');
         Route::post('/day/finish', 'finishDay');
+        Route::post('/day/close', 'closeDay');
+        Route::post('/day/reopen', 'reopenDay');
     }
 );
 

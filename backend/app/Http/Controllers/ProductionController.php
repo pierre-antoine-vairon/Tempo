@@ -2106,4 +2106,405 @@ class ProductionController extends Controller
         ]);
     });
     }
+
+    public function closeDay(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'date' => [
+            'required',
+            'date_format:Y-m-d',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transaction
+    |--------------------------------------------------------------------------
+    */
+
+    return DB::transaction(function () use (
+        $orgId,
+        $siteId,
+        $date
+    ) {
+
+        /*
+        |--------------------------------------------------------------------------
+        | 1. Recherche et verrouillage de la journée
+        |--------------------------------------------------------------------------
+        */
+
+        $day = DB::table('y_production_days')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('production_date', $date)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$day) {
+            return response()->json([
+                'error' => 'production_day_not_found',
+                'message' =>
+                    'La feuille de production demandée n’existe pas.',
+            ], 404);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 2. Idempotence
+        |--------------------------------------------------------------------------
+        |
+        | Si la journée est déjà clôturée,
+        | un nouvel appel ne fait aucune modification.
+        |
+        */
+
+        if ($day->status === 'closed') {
+            return response()->json([
+                'ok' => true,
+                'already_closed' => true,
+
+                'day' => [
+                    'id' => (int) $day->id,
+                    'date' => $day->production_date,
+                    'status' => $day->status,
+                    'closed_at' => $day->closed_at,
+                ],
+            ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 3. Seule une journée finished peut être clôturée
+        |--------------------------------------------------------------------------
+        |
+        | Une journée encore in_progress doit d'abord être
+        | terminée par l'équipe.
+        |
+        */
+
+        if ($day->status !== 'finished') {
+            return response()->json([
+                'error' => 'production_day_not_ready_to_close',
+
+                'message' =>
+                    'La feuille doit être terminée avant de pouvoir être clôturée.',
+
+                'status' => $day->status,
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 4. Clôture
+        |--------------------------------------------------------------------------
+        */
+
+        $now = now('UTC');
+
+        DB::table('y_production_days')
+            ->where('id', $day->id)
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->update([
+                'status' => 'closed',
+
+                'closed_at' => $now,
+
+                /*
+                 * L'utilisateur sera renseigné lorsque
+                 * l'authentification / RBAC sera branchée.
+                 */
+                'closed_by' => null,
+
+                'updated_by' => null,
+                'updated_at' => $now,
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 5. Historique
+        |--------------------------------------------------------------------------
+        */
+
+        DB::table('y_production_day_status_history')
+            ->insert([
+                'org_id' => $orgId,
+                'site_id' => $siteId,
+
+                'production_day_id' =>
+                    $day->id,
+
+                'from_status' =>
+                    'finished',
+
+                'to_status' =>
+                    'closed',
+
+                'reason' =>
+                    null,
+
+                /*
+                 * Pas encore d'authentification.
+                 */
+                'created_by' =>
+                    null,
+
+                'created_at' =>
+                    $now,
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 6. Réponse
+        |--------------------------------------------------------------------------
+        */
+
+        return response()->json([
+            'ok' => true,
+
+            'day' => [
+                'id' => (int) $day->id,
+                'date' => $day->production_date,
+                'status' => 'closed',
+                'closed_at' => $now->toDateTimeString(),
+            ],
+        ]);
+    });
+    }
+
+    public function reopenDay(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    |
+    | La raison est facultative pour le MVP.
+    | Plus tard, on pourra décider de la rendre obligatoire.
+    |
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'date' => [
+            'required',
+            'date_format:Y-m-d',
+        ],
+
+        'reason' => [
+            'nullable',
+            'string',
+            'max:500',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
+    $reason = $validated['reason'] ?? null;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transaction
+    |--------------------------------------------------------------------------
+    */
+
+    return DB::transaction(function () use (
+        $orgId,
+        $siteId,
+        $date,
+        $reason
+    ) {
+
+        /*
+        |--------------------------------------------------------------------------
+        | 1. Recherche et verrouillage de la journée
+        |--------------------------------------------------------------------------
+        */
+
+        $day = DB::table('y_production_days')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('production_date', $date)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$day) {
+            return response()->json([
+                'error' => 'production_day_not_found',
+                'message' =>
+                    'La feuille de production demandée n’existe pas.',
+            ], 404);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 2. Seule une journée closed peut être réouverte
+        |--------------------------------------------------------------------------
+        */
+
+        if ($day->status !== 'closed') {
+            return response()->json([
+                'error' => 'production_day_not_closed',
+
+                'message' =>
+                    'Seule une feuille clôturée peut être réouverte.',
+
+                'status' => $day->status,
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 3. Réouverture
+        |--------------------------------------------------------------------------
+        |
+        | La feuille repasse en in_progress.
+        |
+        | Les données de production existantes sont conservées.
+        |
+        | finished_at / finished_by sont remis à NULL car la feuille
+        | n'est plus considérée comme terminée.
+        |
+        | closed_at / closed_by sont également remis à NULL.
+        |
+        | L'historique conserve néanmoins la trace des anciens statuts.
+        |
+        */
+
+        $now = now('UTC');
+
+        DB::table('y_production_days')
+            ->where('id', $day->id)
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->update([
+                'status' => 'in_progress',
+
+                'finished_at' => null,
+                'finished_by' => null,
+
+                'closed_at' => null,
+                'closed_by' => null,
+
+                /*
+                 * Pas encore d'authentification.
+                 */
+                'updated_by' => null,
+                'updated_at' => $now,
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 4. Historique
+        |--------------------------------------------------------------------------
+        */
+
+        DB::table('y_production_day_status_history')
+            ->insert([
+                'org_id' => $orgId,
+                'site_id' => $siteId,
+
+                'production_day_id' =>
+                    $day->id,
+
+                'from_status' =>
+                    'closed',
+
+                'to_status' =>
+                    'in_progress',
+
+                'reason' =>
+                    $reason,
+
+                /*
+                 * Plus tard :
+                 * utilisateur manager authentifié.
+                 */
+                'created_by' =>
+                    null,
+
+                'created_at' =>
+                    $now,
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 5. Réponse
+        |--------------------------------------------------------------------------
+        */
+
+        return response()->json([
+            'ok' => true,
+
+            'day' => [
+                'id' => (int) $day->id,
+                'date' => $day->production_date,
+                'status' => 'in_progress',
+            ],
+
+            'reason' => $reason,
+        ]);
+    });
+    }
 }
