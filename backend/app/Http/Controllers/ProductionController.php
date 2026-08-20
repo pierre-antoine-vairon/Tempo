@@ -1075,62 +1075,56 @@ class ProductionController extends Controller
 
     public function openDay(Request $request)
     {
-        /*
-        |   --------------------------------------------------------------------------
-        | Validation
-        |   --------------------------------------------------------------------------
-        */
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
 
-        $validated = $request->validate([
-            'site_id' => ['required', 'integer', 'min:1'],
-            'date' => ['required', 'date_format:Y-m-d'],
-        ]);
+    $validated = $request->validate([
+        'site_id' => ['required', 'integer', 'min:1'],
+        'date' => ['required', 'date_format:Y-m-d'],
+    ]);
 
-        $orgId = (int) config('tempo.default_org_id');
-        $siteId = (int) $validated['site_id'];
-        $date = $validated['date'];
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
 
-        /*
-        |   -----------------------------------------------------  ---------------------
-        | Vérification du site
-        |   -----------------------------------------------------  ---------------------
-        |
-        | Le site doit appartenir à l'organisation courante.
-        |
-        */
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
 
-        $siteExists = DB::table('y_sites')
-            ->where('id', $siteId)
-            ->where('org_id', $orgId)
-            ->exists();
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
 
-        if (!$siteExists) {
-            return response()->json([
-                'error' => 'site_not_found',
-                'message' => 'Le site demandé est   introuvable pour cette organisation.',
-            ], 404);
-        }
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
 
-        /*
-        |   -----------------------------------------------------  ---------------------
-        | Transaction
-        |   -----------------------------------------------------  ---------------------
-        */
+    /*
+    |--------------------------------------------------------------------------
+    | Transaction
+    |--------------------------------------------------------------------------
+    */
 
-        return DB::transaction(function () use (
-            $orgId,
-            $siteId,
-            $date
-        ) {
+    return DB::transaction(function () use (
+        $orgId,
+        $siteId,
+        $date
+    ) {
 
         /*
         |--------------------------------------------------------------------------
-        | 1. Vérifier si la journée existe déjà
+        | 1. Journée déjà existante
         |--------------------------------------------------------------------------
-        |
-        | L'ouverture est idempotente :
-        | ouvrir deux fois la même date ne crée jamais deux journées.
-        |
         */
 
         $existingDay = DB::table('y_production_days')
@@ -1209,16 +1203,8 @@ class ProductionController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | 4. Produits actifs du catalogue
+        | 4. Produits actifs
         |--------------------------------------------------------------------------
-        |
-        | On récupère uniquement :
-        |
-        | - les produits actifs ;
-        | - appartenant au bon site / à la bonne organisation ;
-        | - dont la catégorie est active ;
-        | - dont la famille est active.
-        |
         */
 
         $products = DB::table('y_products as p')
@@ -1237,46 +1223,28 @@ class ProductionController extends Controller
                 'c.family_id'
             )
 
-            /*
-             * Produit
-             */
             ->where('p.org_id', $orgId)
             ->where('p.site_id', $siteId)
             ->where('p.is_active', 1)
 
-            /*
-             * Catégorie
-             */
             ->where('c.org_id', $orgId)
             ->where('c.site_id', $siteId)
             ->where('c.is_active', 1)
 
-            /*
-             * Famille
-             */
             ->where('f.org_id', $orgId)
             ->where('f.site_id', $siteId)
             ->where('f.is_active', 1)
 
             ->select([
-                /*
-                 * Produit
-                 */
                 'p.id as product_id',
                 'p.name as product_name',
                 'p.conservation',
                 'p.display_order as product_order',
 
-                /*
-                 * Catégorie
-                 */
                 'c.id as category_id',
                 'c.name as category_name',
                 'c.display_order as category_order',
 
-                /*
-                 * Famille
-                 */
                 'f.id as family_id',
                 'f.name as family_name',
                 'f.display_order as family_order',
@@ -1291,167 +1259,133 @@ class ProductionController extends Controller
 
         /*
         |--------------------------------------------------------------------------
-        | 5. Date précédente
-        |--------------------------------------------------------------------------
-        |
-        | Pour la V1 :
-        |
-        | Stock fin de J-1
-        |          ↓
-        | Stock J-1 de J
-        |
-        | On recherche donc uniquement la veille calendaire.
-        |
-        */
-
-        $previousDate = \Illuminate\Support\Carbon::createFromFormat(
-            'Y-m-d',
-            $date
-        )
-            ->subDay()
-            ->toDateString();
-
-        /*
-        |--------------------------------------------------------------------------
-        | 6. Récupération des stocks de J-1
+        | Aucun produit
         |--------------------------------------------------------------------------
         */
 
-        $productIds = $products
-            ->pluck('product_id')
-            ->all();
+        if ($products->isEmpty()) {
+            $day = DB::table('y_production_days')
+                ->where('id', $productionDayId)
+                ->first();
 
-        $previousEntries = collect();
-
-        if (count($productIds) > 0) {
-            $previousEntries = DB::table('y_production_entries as e')
-
-                /*
-                 * Nouvelle architecture :
-                 *
-                 * entry
-                 *   ↓
-                 * produit de journée
-                 *   ↓
-                 * journée
-                 */
-
-                ->leftJoin(
-                    'y_production_day_products as dp',
-                    'dp.id',
-                    '=',
-                    'e.production_day_product_id'
-                )
-
-                ->leftJoin(
-                    'y_production_days as d',
-                    'd.id',
-                    '=',
-                    'dp.production_day_id'
-                )
-
-                ->where('e.org_id', $orgId)
-                ->where('e.site_id', $siteId)
-
-                ->whereIn(
-                    'e.product_id',
-                    $productIds
-                )
-
-                /*
-                 * On cherche uniquement J-1.
-                 */
-
-                ->where(
-                    'e.production_date',
-                    '=',
-                    $previousDate
-                )
-
-                ->select([
-                    'e.product_id',
-                    'e.stock_end',
-                    'e.production_day_product_id',
-
-                    /*
-                     * Le produit faisait-il réellement partie
-                     * de la feuille précédente ?
-                     */
-
-                    'dp.is_included as was_included',
-
-                    /*
-                     * Statut de la journée précédente.
-                     */
-
-                    'd.status as day_status',
-                ])
-
-                ->get()
-
-                /*
-                 * Une seule entrée possible par produit/date.
-                 *
-                 * Cela permet ensuite :
-                 *
-                 * $previousEntries->get($productId)
-                 */
-
-                ->keyBy('product_id');
+            return response()->json([
+                'created' => true,
+                'day' => $day,
+                'products_count' => 0,
+            ], 201);
         }
 
         /*
         |--------------------------------------------------------------------------
-        | 7. Création du snapshot de chaque produit
+        | 5. Veille calendaire
         |--------------------------------------------------------------------------
         */
 
+        $previousDate =
+            \Illuminate\Support\Carbon::createFromFormat(
+                'Y-m-d',
+                $date
+            )
+                ->subDay()
+                ->toDateString();
+
+        $productIds = $products
+            ->pluck('product_id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+
+        /*
+        |--------------------------------------------------------------------------
+        | 6. Stocks de J-1
+        |--------------------------------------------------------------------------
+        */
+
+        $previousEntries = DB::table('y_production_entries as e')
+
+            ->leftJoin(
+                'y_production_day_products as dp',
+                'dp.id',
+                '=',
+                'e.production_day_product_id'
+            )
+
+            ->leftJoin(
+                'y_production_days as d',
+                'd.id',
+                '=',
+                'dp.production_day_id'
+            )
+
+            ->where('e.org_id', $orgId)
+            ->where('e.site_id', $siteId)
+
+            ->whereIn(
+                'e.product_id',
+                $productIds
+            )
+
+            ->where(
+                'e.production_date',
+                $previousDate
+            )
+
+            ->select([
+                'e.product_id',
+                'e.stock_end',
+                'e.production_day_product_id',
+
+                'dp.is_included as was_included',
+                'd.status as day_status',
+            ])
+
+            ->get()
+
+            ->keyBy('product_id');
+
+        /*
+        |--------------------------------------------------------------------------
+        | 7. Préparation des snapshots
+        |--------------------------------------------------------------------------
+        |
+        | IMPORTANT :
+        |
+        | On ne fait plus un INSERT par produit.
+        | On prépare toutes les lignes en mémoire.
+        |
+        */
+
+        $snapshotRows = [];
+
+        /*
+         * On conserve également le Stock J-1 calculé
+         * pour construire ensuite les entries.
+         */
+        $stockPreviousByProductId = [];
+
         foreach ($products as $product) {
+
+            $productId = (int) $product->product_id;
 
             /*
             |--------------------------------------------------------------------------
-            | Calcul du Stock J-1
+            | Stock J-1
             |--------------------------------------------------------------------------
             */
 
             $stockPrevious = null;
 
-            /*
-             * Conservation J :
-             *
-             * le produit ne peut jamais conserver un stock
-             * provenant de la veille.
-             */
-
             if ($product->conservation !== 'J') {
 
-                $previousEntry = $previousEntries->get(
-                    $product->product_id
-                );
+                $previousEntry =
+                    $previousEntries->get($productId);
 
                 if ($previousEntry) {
 
-                    /*
-                     * Anciennes données :
-                     *
-                     * Les anciennes lignes de production n'étaient
-                     * pas encore reliées à y_production_day_products.
-                     *
-                     * On les accepte temporairement pendant
-                     * la migration vers le nouveau modèle.
-                     */
-
                     $isLegacyEntry =
-                        $previousEntry->production_day_product_id === null;
-
-                    /*
-                     * Nouvelle architecture :
-                     *
-                     * Pour utiliser le stock final précédent :
-                     *
-                     * - le produit devait être inclus ;
-                     * - la feuille devait être terminée ou clôturée.
-                     */
+                        $previousEntry
+                            ->production_day_product_id
+                        === null;
 
                     $isValidNewEntry =
                         (int) $previousEntry->was_included === 1
@@ -1463,11 +1397,6 @@ class ProductionController extends Controller
                             ],
                             true
                         );
-
-                    /*
-                     * Si la donnée précédente est valable,
-                     * son stock final devient le stock J-1.
-                     */
 
                     if (
                         $isLegacyEntry
@@ -1481,37 +1410,30 @@ class ProductionController extends Controller
                 }
             }
 
+            $stockPreviousByProductId[$productId] =
+                $stockPrevious;
+
             /*
             |--------------------------------------------------------------------------
-            | 8. Snapshot du produit pour cette journée
+            | Snapshot
             |--------------------------------------------------------------------------
-            |
-            | Cette photographie protège l'historique.
-            |
-            | Si demain le produit, sa catégorie ou sa famille
-            | sont renommés, cette journée ne changera pas.
-            |
             */
 
-            $productionDayProductId = DB::table(
-                'y_production_day_products'
-            )->insertGetId([
+            $snapshotRows[] = [
                 'org_id' => $orgId,
                 'site_id' => $siteId,
 
-                'production_day_id' => $productionDayId,
+                'production_day_id' =>
+                    $productionDayId,
 
-                /*
-                 * Références actuelles
-                 */
+                'product_id' =>
+                    $productId,
 
-                'product_id' => $product->product_id,
-                'category_id' => $product->category_id,
-                'family_id' => $product->family_id,
+                'category_id' =>
+                    (int) $product->category_id,
 
-                /*
-                 * Snapshot historique
-                 */
+                'family_id' =>
+                    (int) $product->family_id,
 
                 'product_name_snapshot' =>
                     $product->product_name,
@@ -1525,10 +1447,6 @@ class ProductionController extends Controller
                 'conservation_snapshot' =>
                     $product->conservation,
 
-                /*
-                 * Ordre d'affichage historique
-                 */
-
                 'product_order_snapshot' =>
                     $product->product_order,
 
@@ -1538,81 +1456,134 @@ class ProductionController extends Controller
                 'family_order_snapshot' =>
                     $product->family_order,
 
-                /*
-                 * Le produit est présent dans cette feuille.
-                 */
-
                 'is_included' => 1,
 
                 'excluded_at' => null,
                 'excluded_by' => null,
-
-                /*
-                 * Audit
-                 */
 
                 'created_by' => null,
                 'created_at' => $now,
 
                 'updated_by' => null,
                 'updated_at' => $now,
-            ]);
-
-            /*
-            |--------------------------------------------------------------------------
-            | 9. Création de la ligne de saisie
-            |--------------------------------------------------------------------------
-            |
-            | NULL = pas encore renseigné.
-            |
-            | stock_previous peut déjà être prérempli automatiquement
-            | depuis le stock_end de J-1.
-            |
-            */
-
-            DB::table('y_production_entries')
-                ->insert([
-                    'org_id' => $orgId,
-                    'site_id' => $siteId,
-
-                    'product_id' => $product->product_id,
-
-                    'production_day_product_id' =>
-                        $productionDayProductId,
-
-                    'production_date' => $date,
-
-                    /*
-                     * Prérempli automatiquement si applicable.
-                     */
-
-                    'stock_previous' => $stockPrevious,
-
-                    /*
-                     * Saisie de la journée.
-                     */
-
-                    'production' => null,
-                    'reproduction' => null,
-                    'losses' => null,
-                    'sales' => null,
-                    'stock_end' => null,
-
-                    /*
-                     * Audit
-                     */
-
-                    'created_by' => null,
-                    'created_at' => $now,
-
-                    'updated_by' => null,
-                    'updated_at' => $now,
-                ]);
+            ];
         }
 
         /*
         |--------------------------------------------------------------------------
-        | 10. Réponse
+        | 8. Création de TOUS les snapshots en une requête
+        |--------------------------------------------------------------------------
+        */
+
+        DB::table('y_production_day_products')
+            ->insert($snapshotRows);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 9. Récupération des IDs générés
+        |--------------------------------------------------------------------------
+        |
+        | Après l'INSERT groupé, on récupère les IDs des snapshots
+        | afin de relier correctement y_production_entries.
+        |
+        */
+
+        $dayProductsByProductId =
+            DB::table('y_production_day_products')
+
+                ->where(
+                    'production_day_id',
+                    $productionDayId
+                )
+
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+
+                ->whereIn(
+                    'product_id',
+                    $productIds
+                )
+
+                ->select([
+                    'id',
+                    'product_id',
+                ])
+
+                ->get()
+
+                ->keyBy('product_id');
+
+        /*
+        |--------------------------------------------------------------------------
+        | 10. Préparation des lignes de saisie
+        |--------------------------------------------------------------------------
+        */
+
+        $entryRows = [];
+
+        foreach ($products as $product) {
+
+            $productId =
+                (int) $product->product_id;
+
+            $dayProduct =
+                $dayProductsByProductId->get(
+                    $productId
+                );
+
+            /*
+             * Sécurité technique :
+             * chaque snapshot doit avoir été retrouvé.
+             */
+            if (!$dayProduct) {
+                throw new \RuntimeException(
+                    'Snapshot de produit introuvable après création.'
+                );
+            }
+
+            $entryRows[] = [
+                'org_id' => $orgId,
+                'site_id' => $siteId,
+
+                'product_id' =>
+                    $productId,
+
+                'production_day_product_id' =>
+                    (int) $dayProduct->id,
+
+                'production_date' =>
+                    $date,
+
+                'stock_previous' =>
+                    $stockPreviousByProductId[$productId]
+                    ?? null,
+
+                'production' => null,
+                'reproduction' => null,
+                'losses' => null,
+                'sales' => null,
+                'stock_end' => null,
+
+                'created_by' => null,
+                'created_at' => $now,
+
+                'updated_by' => null,
+                'updated_at' => $now,
+            ];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 11. Création de TOUTES les entries en une requête
+        |--------------------------------------------------------------------------
+        */
+
+        DB::table('y_production_entries')
+            ->insert($entryRows);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 12. Réponse
         |--------------------------------------------------------------------------
         */
 
@@ -1623,9 +1594,10 @@ class ProductionController extends Controller
         return response()->json([
             'created' => true,
             'day' => $day,
-            'products_count' => $products->count(),
+            'products_count' =>
+                $products->count(),
         ], 201);
-        });
+    });
     }
 
     public function finishDay(Request $request)

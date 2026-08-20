@@ -1,22 +1,41 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiGet, apiPut } from "../../api";
+import { apiGet, apiPost, apiPut } from "../../api";
 
 type NullableNumber = number | null;
 
+type ProductionStatus = "in_progress" | "finished" | "closed";
+
+type ProductionDay = {
+  id: number;
+  org_id: number;
+  site_id: number;
+  production_date: string;
+  status: ProductionStatus;
+
+  started_at: string | null;
+  started_by: number | null;
+
+  finished_at: string | null;
+  finished_by: number | null;
+
+  closed_at: string | null;
+  closed_by: number | null;
+};
+
 type ProductionProduct = {
+  production_day_product_id: number;
   product_id: number;
+  category_id: number;
+  family_id: number;
+
   name: string;
-
-  // Grande famille : Salé / Sucré
   family: string;
-
-  // Sous-catégorie : Panini, Pizza, Muffin, etc.
   category: string;
-
   conservation: string | null;
 
+  is_included: boolean;
+
   entry_id: number | null;
-  production_date: string | null;
 
   stock_previous: NullableNumber;
   production: NullableNumber;
@@ -26,16 +45,35 @@ type ProductionProduct = {
   stock_end: NullableNumber;
 };
 
-type ProductionResponse = {
+type ProductionDayNotStartedResponse = {
+  exists: false;
   org_id: number;
   site_id: number;
   date: string;
+  status: "not_started";
+  products_count: number;
+  products: [];
+};
+
+type ProductionDayExistingResponse = {
+  exists: true;
+  day: ProductionDay;
+  products_count: number;
   products: ProductionProduct[];
 };
 
+type ProductionDayResponse =
+  | ProductionDayNotStartedResponse
+  | ProductionDayExistingResponse;
+
+type OpenProductionDayResponse = {
+  created: boolean;
+  day: ProductionDay;
+  products_count: number;
+};
+
 type ProductionEntryPayload = {
-  product_id: number;
-  stock_previous: NullableNumber;
+  production_day_product_id: number;
   production: NullableNumber;
   reproduction: NullableNumber;
   losses: NullableNumber;
@@ -45,25 +83,20 @@ type ProductionEntryPayload = {
 
 type SaveProductionResponse = {
   ok: boolean;
-  org_id: number;
-  site_id: number;
-  date: string;
+  day: {
+    id: number;
+    date: string;
+    status: ProductionStatus;
+  };
   saved_entries: number;
 };
 
 type EditableField =
-  | "stock_previous"
   | "production"
   | "reproduction"
   | "losses"
   | "sales"
   | "stock_end";
-
-/*
-|--------------------------------------------------------------------------
-| Date locale du jour
-|--------------------------------------------------------------------------
-*/
 
 function getTodayLocal(): string {
   const now = new Date();
@@ -75,17 +108,17 @@ function getTodayLocal(): string {
   return `${year}-${month}-${day}`;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Page Production
-|--------------------------------------------------------------------------
-*/
-
 export default function ProductionDayPage() {
   const [date, setDate] = useState(getTodayLocal());
+
+  const [day, setDay] = useState<ProductionDay | null>(null);
   const [products, setProducts] = useState<ProductionProduct[]>([]);
+  const [dirtyProductIds, setDirtyProductIds] = useState<Set<number>>(
+    () => new Set(),
+  );
 
   const [loading, setLoading] = useState(true);
+  const [opening, setOpening] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
@@ -93,18 +126,15 @@ export default function ProductionDayPage() {
 
   /*
   |--------------------------------------------------------------------------
-  | Site
+  | Site MVP
   |--------------------------------------------------------------------------
-  |
-  | Pour le MVP, le site est encore fixé à 1.
-  |
   */
 
   const siteId = 1;
 
   /*
   |--------------------------------------------------------------------------
-  | Chargement de la feuille
+  | Lecture de la journée
   |--------------------------------------------------------------------------
   */
 
@@ -113,12 +143,28 @@ export default function ProductionDayPage() {
       setLoading(true);
       setError(null);
 
-      const data = await apiGet<ProductionResponse>(
-        `/production?site_id=${siteId}&date=${date}`,
+      const data = await apiGet<ProductionDayResponse>(
+        `/production/day?site_id=${siteId}&date=${date}`,
       );
 
-      setProducts(data.products);
+      if (!data.exists) {
+        setDay(null);
+        setProducts([]);
+        return;
+      }
+
+      setDay(data.day);
+
+      /*
+       * Les produits exclus restent dans l'historique côté backend,
+       * mais ne sont pas affichés dans la feuille active.
+       */
+      setProducts(data.products.filter((product) => product.is_included));
+      setDirtyProductIds(new Set());
     } catch (err) {
+      setDay(null);
+      setProducts([]);
+
       setError(
         err instanceof Error
           ? err.message
@@ -129,12 +175,6 @@ export default function ProductionDayPage() {
     }
   }, [date, siteId]);
 
-  /*
-  |--------------------------------------------------------------------------
-  | Rechargement lors du changement de date
-  |--------------------------------------------------------------------------
-  */
-
   useEffect(() => {
     setSavedMessage(null);
     void loadProduction();
@@ -142,12 +182,47 @@ export default function ProductionDayPage() {
 
   /*
   |--------------------------------------------------------------------------
-  | Modification d'une valeur
+  | Ouverture d'une nouvelle journée
+  |--------------------------------------------------------------------------
+  */
+
+  async function openProductionDay() {
+    try {
+      setOpening(true);
+      setError(null);
+      setSavedMessage(null);
+
+      await apiPost<
+        OpenProductionDayResponse,
+        {
+          site_id: number;
+          date: string;
+        }
+      >("/production/day/open", {
+        site_id: siteId,
+        date,
+      });
+
+      await loadProduction();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de démarrer la production.",
+      );
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | Modification locale
   |--------------------------------------------------------------------------
   */
 
   function updateProduct(
-    productId: number,
+    productionDayProductId: number,
     field: EditableField,
     value: string,
   ) {
@@ -155,19 +230,31 @@ export default function ProductionDayPage() {
 
     setProducts((currentProducts) =>
       currentProducts.map((product) => {
-        if (product.product_id !== productId) {
+        if (product.production_day_product_id !== productionDayProductId) {
           return product;
         }
 
         return {
           ...product,
-
-          // Champ vide = NULL
-          // "0" = vrai zéro
           [field]: value === "" ? null : Number(value),
         };
       }),
     );
+
+    /*
+     * On mémorise que cette ligne a été modifiée.
+     *
+     * Set empêche naturellement les doublons :
+     * si on modifie 5 fois Oriental,
+     * son identifiant n'apparaît qu'une seule fois.
+     */
+    setDirtyProductIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+
+      nextIds.add(productionDayProductId);
+
+      return nextIds;
+    });
   }
 
   /*
@@ -177,28 +264,42 @@ export default function ProductionDayPage() {
   */
 
   async function saveProduction() {
+    if (!day || day.status !== "in_progress") {
+      return;
+    }
+
+    /*
+     * Rien n'a changé :
+     * aucune requête inutile vers le backend.
+     */
+    if (dirtyProductIds.size === 0) {
+      setSavedMessage("Aucune modification à enregistrer.");
+      return;
+    }
+
     try {
       setSaving(true);
       setError(null);
       setSavedMessage(null);
 
-      const entries: ProductionEntryPayload[] = products.map((product) => ({
-        product_id: product.product_id,
+      /*
+       * On n'envoie maintenant QUE les produits réellement modifiés.
+       */
+      const modifiedProducts = products.filter((product) =>
+        dirtyProductIds.has(product.production_day_product_id),
+      );
 
-        /*
-         * Protection frontend :
-         * un produit avec conservation J
-         * ne peut jamais avoir de Stock J-1.
-         */
-        stock_previous:
-          product.conservation === "J" ? null : product.stock_previous,
+      const entries: ProductionEntryPayload[] = modifiedProducts.map(
+        (product) => ({
+          production_day_product_id: product.production_day_product_id,
 
-        production: product.production,
-        reproduction: product.reproduction,
-        losses: product.losses,
-        sales: product.sales,
-        stock_end: product.stock_end,
-      }));
+          production: product.production,
+          reproduction: product.reproduction,
+          losses: product.losses,
+          sales: product.sales,
+          stock_end: product.stock_end,
+        }),
+      );
 
       const response = await apiPut<
         SaveProductionResponse,
@@ -207,18 +308,25 @@ export default function ProductionDayPage() {
           date: string;
           entries: ProductionEntryPayload[];
         }
-      >("/production", {
+      >("/production/day", {
         site_id: siteId,
         date,
         entries,
       });
 
       setSavedMessage(
-        `Production enregistrée (${response.saved_entries} lignes enregistrées).`,
+        `Production enregistrée (${response.saved_entries} ${
+          response.saved_entries > 1
+            ? "lignes enregistrées"
+            : "ligne enregistrée"
+        }).`,
       );
 
       /*
-       * Recharge les données réellement enregistrées en DB.
+       * On recharge les valeurs venant réellement de la DB.
+       *
+       * Pour l'instant on conserve cette sécurité.
+       * On pourra mesurer ensuite si ce GET ajoute une latence importante.
        */
       await loadProduction();
     } catch (err) {
@@ -236,53 +344,25 @@ export default function ProductionDayPage() {
   |--------------------------------------------------------------------------
   | Regroupement Famille -> Catégorie -> Produits
   |--------------------------------------------------------------------------
-  |
-  | Exemple :
-  |
-  | Salé
-  |   Panini
-  |   Pizza
-  |   Plat
-  |
-  | Sucré
-  |   Cookie
-  |   Donut
-  |   Muffin
-  |
   */
 
   const families = useMemo(() => {
     const grouped = new Map<string, Map<string, ProductionProduct[]>>();
 
     for (const product of products) {
-      /*
-       * Création de la famille si elle n'existe pas encore.
-       */
       if (!grouped.has(product.family)) {
         grouped.set(product.family, new Map());
       }
 
       const familyCategories = grouped.get(product.family)!;
 
-      /*
-       * Création de la catégorie dans la famille.
-       */
       if (!familyCategories.has(product.category)) {
         familyCategories.set(product.category, []);
       }
 
-      /*
-       * Ajout du produit dans sa catégorie.
-       */
       familyCategories.get(product.category)!.push(product);
     }
 
-    /*
-     * Ordre métier imposé :
-     *
-     * 1. Salé
-     * 2. Sucré
-     */
     const familyOrder = ["Salé", "Sucré"];
 
     return Array.from(grouped.entries()).sort(([familyA], [familyB]) => {
@@ -290,32 +370,23 @@ export default function ProductionDayPage() {
       const indexB = familyOrder.indexOf(familyB);
 
       const orderA = indexA === -1 ? familyOrder.length : indexA;
+
       const orderB = indexB === -1 ? familyOrder.length : indexB;
 
       return orderA - orderB;
     });
   }, [products]);
 
-  /*
-  |--------------------------------------------------------------------------
-  | Chargement
-  |--------------------------------------------------------------------------
-  */
+  const isEditable = day?.status === "in_progress";
 
   if (loading) {
     return (
       <div style={{ padding: 24 }}>
-        <h1>Production</h1>
+        <h2>Production du jour</h2>
         <p>Chargement...</p>
       </div>
     );
   }
-
-  /*
-  |--------------------------------------------------------------------------
-  | Affichage
-  |--------------------------------------------------------------------------
-  */
 
   return (
     <div style={{ padding: 24 }}>
@@ -334,13 +405,7 @@ export default function ProductionDayPage() {
         }}
       >
         <div>
-          <h1
-            style={{
-              margin: 0,
-            }}
-          >
-            Production
-          </h1>
+          <h2 style={{ margin: 0 }}>Production du jour</h2>
 
           <p
             style={{
@@ -371,27 +436,44 @@ export default function ProductionDayPage() {
             }}
           />
 
-          <button
-            type="button"
-            onClick={saveProduction}
-            disabled={saving}
-            style={{
-              padding: "10px 16px",
-              border: 0,
-              borderRadius: 8,
-              cursor: saving ? "not-allowed" : "pointer",
-              background: "#0f172a",
-              color: "white",
-              fontWeight: 600,
-            }}
-          >
-            {saving ? "Enregistrement..." : "Enregistrer"}
-          </button>
+          {day && (
+            <span
+              style={{
+                padding: "7px 10px",
+                borderRadius: 8,
+                background: "#f1f5f9",
+                color: "#475569",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              {getStatusLabel(day.status)}
+            </span>
+          )}
+
+          {isEditable && (
+            <button
+              type="button"
+              onClick={saveProduction}
+              disabled={saving}
+              style={{
+                padding: "10px 16px",
+                border: 0,
+                borderRadius: 8,
+                cursor: saving ? "not-allowed" : "pointer",
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+              }}
+            >
+              {saving ? "Enregistrement..." : "Enregistrer"}
+            </button>
+          )}
         </div>
       </div>
 
       {/* ================================================================
-          MESSAGE D'ERREUR
+          ERREUR
       ================================================================= */}
 
       {error && (
@@ -409,7 +491,7 @@ export default function ProductionDayPage() {
       )}
 
       {/* ================================================================
-          MESSAGE DE SUCCÈS
+          SUCCÈS
       ================================================================= */}
 
       {savedMessage && (
@@ -427,293 +509,301 @@ export default function ProductionDayPage() {
       )}
 
       {/* ================================================================
-          FAMILLES : SALÉ / SUCRÉ
+          JOURNÉE NON DÉMARRÉE
       ================================================================= */}
 
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 48,
-        }}
-      >
-        {families.map(([family, categories]) => {
-          /*
-           * Nombre total de produits de la famille.
-           */
-          const familyProductCount = Array.from(categories.values()).reduce(
-            (total, categoryProducts) => total + categoryProducts.length,
-            0,
-          );
+      {!day && (
+        <div
+          style={{
+            padding: 32,
+            border: "1px solid #e2e8f0",
+            borderRadius: 12,
+            background: "white",
+            textAlign: "center",
+          }}
+        >
+          <h3
+            style={{
+              marginTop: 0,
+              marginBottom: 8,
+            }}
+          >
+            Production non démarrée
+          </h3>
 
-          return (
-            <section key={family}>
-              {/* ========================================================
-                  TITRE DE LA FAMILLE
-              ========================================================= */}
+          <p
+            style={{
+              marginTop: 0,
+              marginBottom: 20,
+              color: "#64748b",
+            }}
+          >
+            Aucune feuille de production n'existe encore pour cette date.
+          </p>
 
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 18,
-                  paddingBottom: 10,
-                  borderBottom: "2px solid #cbd5e1",
-                }}
-              >
-                <h2
+          <button
+            type="button"
+            onClick={openProductionDay}
+            disabled={opening}
+            style={{
+              padding: "10px 16px",
+              border: 0,
+              borderRadius: 8,
+              cursor: opening ? "not-allowed" : "pointer",
+              background: "#0f172a",
+              color: "white",
+              fontWeight: 600,
+            }}
+          >
+            {opening ? "Démarrage..." : "Démarrer la production"}
+          </button>
+        </div>
+      )}
+
+      {/* ================================================================
+          FEUILLE
+      ================================================================= */}
+
+      {day && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 48,
+          }}
+        >
+          {families.map(([family, categories]) => {
+            const familyProductCount = Array.from(categories.values()).reduce(
+              (total, categoryProducts) => total + categoryProducts.length,
+              0,
+            );
+
+            return (
+              <section key={family}>
+                <div
                   style={{
-                    margin: 0,
-                    fontSize: 24,
-                    color: "#0f172a",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    marginBottom: 18,
+                    paddingBottom: 10,
+                    borderBottom: "2px solid #cbd5e1",
                   }}
                 >
-                  {family}
-                </h2>
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: 24,
+                      color: "#0f172a",
+                    }}
+                  >
+                    {family}
+                  </h2>
 
-                <span
+                  <span
+                    style={{
+                      color: "#64748b",
+                      fontSize: 14,
+                    }}
+                  >
+                    {familyProductCount} produits
+                  </span>
+                </div>
+
+                <div
                   style={{
-                    color: "#64748b",
-                    fontSize: 14,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 24,
                   }}
                 >
-                  {familyProductCount} produits
-                </span>
-              </div>
-
-              {/* ========================================================
-                  CATÉGORIES DE LA FAMILLE
-              ========================================================= */}
-
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 24,
-                }}
-              >
-                {Array.from(categories.entries()).map(
-                  ([category, categoryProducts]) => (
-                    <section
-                      key={`${family}-${category}`}
-                      style={{
-                        background: "white",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: 12,
-                        overflow: "hidden",
-                      }}
-                    >
-                      {/* ==================================================
-                          TITRE DE LA CATÉGORIE
-                      =================================================== */}
-
-                      <div
+                  {Array.from(categories.entries()).map(
+                    ([category, categoryProducts]) => (
+                      <section
+                        key={`${family}-${category}`}
                         style={{
-                          padding: "12px 16px",
-                          background: "#f1f5f9",
-                          borderBottom: "1px solid #e2e8f0",
+                          background: "white",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 12,
+                          overflow: "hidden",
                         }}
                       >
-                        <strong>{category}</strong>
-
-                        <span
+                        <div
                           style={{
-                            marginLeft: 8,
-                            color: "#64748b",
-                            fontSize: 13,
+                            padding: "12px 16px",
+                            background: "#f1f5f9",
+                            borderBottom: "1px solid #e2e8f0",
                           }}
                         >
-                          {categoryProducts.length}{" "}
-                          {categoryProducts.length > 1 ? "produits" : "produit"}
-                        </span>
-                      </div>
+                          <strong>{category}</strong>
 
-                      {/* ==================================================
-                          TABLEAU
-                      =================================================== */}
+                          <span
+                            style={{
+                              marginLeft: 8,
+                              color: "#64748b",
+                              fontSize: 13,
+                            }}
+                          >
+                            {categoryProducts.length}{" "}
+                            {categoryProducts.length > 1
+                              ? "produits"
+                              : "produit"}
+                          </span>
+                        </div>
 
-                      <div
-                        style={{
-                          overflowX: "auto",
-                        }}
-                      >
-                        <table
-                          style={{
-                            width: "100%",
-                            borderCollapse: "collapse",
-                            minWidth: 1100,
+                        <div style={{ overflowX: "auto" }}>
+                          <table
+                            style={{
+                              width: "100%",
+                              borderCollapse: "collapse",
+                              minWidth: 1100,
+                              tableLayout: "fixed",
+                            }}
+                          >
+                            <colgroup>
+                              <col style={{ width: "22%" }} />
+                              <col style={{ width: "13%" }} />
+                              <col style={{ width: "11%" }} />
+                              <col style={{ width: "11%" }} />
+                              <col style={{ width: "11%" }} />
+                              <col style={{ width: "10%" }} />
+                              <col style={{ width: "11%" }} />
+                              <col style={{ width: "11%" }} />
+                            </colgroup>
 
-                            /*
-                             * Important :
-                             * garantit exactement les mêmes largeurs
-                             * de colonnes pour toutes les catégories.
-                             */
-                            tableLayout: "fixed",
-                          }}
-                        >
-                          {/* ==============================================
-                              LARGEURS FIXES DES COLONNES
-                          =============================================== */}
+                            <thead>
+                              <tr>
+                                <th style={headerCellStyle}>Produit</th>
 
-                          <colgroup>
-                            <col style={{ width: "22%" }} />
-                            <col style={{ width: "13%" }} />
-                            <col style={{ width: "11%" }} />
-                            <col style={{ width: "11%" }} />
-                            <col style={{ width: "11%" }} />
-                            <col style={{ width: "10%" }} />
-                            <col style={{ width: "11%" }} />
-                            <col style={{ width: "11%" }} />
-                          </colgroup>
+                                <th style={headerCellStyle}>Conservation</th>
 
-                          {/* ==============================================
-                              EN-TÊTES
-                          =============================================== */}
+                                <th style={headerCellStyle}>Stock J-1</th>
 
-                          <thead>
-                            <tr>
-                              <th style={headerCellStyle}>Produit</th>
+                                <th style={headerCellStyle}>Production</th>
 
-                              <th style={headerCellStyle}>Conservation</th>
+                                <th style={headerCellStyle}>Reproduction</th>
 
-                              <th style={headerCellStyle}>Stock J-1</th>
+                                <th style={headerCellStyle}>Pertes</th>
 
-                              <th style={headerCellStyle}>Production</th>
+                                <th style={headerCellStyle}>Ventes</th>
 
-                              <th style={headerCellStyle}>Reproduction</th>
-
-                              <th style={headerCellStyle}>Pertes</th>
-
-                              <th style={headerCellStyle}>Ventes</th>
-
-                              <th style={headerCellStyle}>Stock fin</th>
-                            </tr>
-                          </thead>
-
-                          {/* ==============================================
-                              PRODUITS
-                          =============================================== */}
-
-                          <tbody>
-                            {categoryProducts.map((product) => (
-                              <tr key={product.product_id}>
-                                {/* Produit */}
-
-                                <td style={bodyCellStyle}>
-                                  <strong>{product.name}</strong>
-                                </td>
-
-                                {/* Conservation */}
-
-                                <td style={bodyCellStyle}>
-                                  {product.conservation ?? "—"}
-                                </td>
-
-                                {/* Stock J-1 */}
-
-                                <ProductionInput
-                                  value={
-                                    product.conservation === "J"
-                                      ? null
-                                      : product.stock_previous
-                                  }
-                                  disabled={product.conservation === "J"}
-                                  onChange={(value) =>
-                                    updateProduct(
-                                      product.product_id,
-                                      "stock_previous",
-                                      value,
-                                    )
-                                  }
-                                />
-
-                                {/* Production */}
-
-                                <ProductionInput
-                                  value={product.production}
-                                  onChange={(value) =>
-                                    updateProduct(
-                                      product.product_id,
-                                      "production",
-                                      value,
-                                    )
-                                  }
-                                />
-
-                                {/* Reproduction */}
-
-                                <ProductionInput
-                                  value={product.reproduction}
-                                  onChange={(value) =>
-                                    updateProduct(
-                                      product.product_id,
-                                      "reproduction",
-                                      value,
-                                    )
-                                  }
-                                />
-
-                                {/* Pertes */}
-
-                                <ProductionInput
-                                  value={product.losses}
-                                  onChange={(value) =>
-                                    updateProduct(
-                                      product.product_id,
-                                      "losses",
-                                      value,
-                                    )
-                                  }
-                                />
-
-                                {/* Ventes */}
-
-                                <ProductionInput
-                                  value={product.sales}
-                                  onChange={(value) =>
-                                    updateProduct(
-                                      product.product_id,
-                                      "sales",
-                                      value,
-                                    )
-                                  }
-                                />
-
-                                {/* Stock fin */}
-
-                                <ProductionInput
-                                  value={product.stock_end}
-                                  onChange={(value) =>
-                                    updateProduct(
-                                      product.product_id,
-                                      "stock_end",
-                                      value,
-                                    )
-                                  }
-                                />
+                                <th style={headerCellStyle}>Stock fin</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </section>
-                  ),
-                )}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+                            </thead>
+
+                            <tbody>
+                              {categoryProducts.map((product) => (
+                                <tr key={product.production_day_product_id}>
+                                  <td style={bodyCellStyle}>
+                                    <strong>{product.name}</strong>
+                                  </td>
+
+                                  <td style={bodyCellStyle}>
+                                    {product.conservation ?? "—"}
+                                  </td>
+
+                                  {/* Stock J-1 :
+                                        toujours calculé par le backend */}
+
+                                  <ProductionInput
+                                    value={
+                                      product.conservation === "J"
+                                        ? null
+                                        : product.stock_previous
+                                    }
+                                    disabled
+                                    onChange={() => {}}
+                                  />
+
+                                  <ProductionInput
+                                    value={product.production}
+                                    disabled={!isEditable}
+                                    onChange={(value) =>
+                                      updateProduct(
+                                        product.production_day_product_id,
+                                        "production",
+                                        value,
+                                      )
+                                    }
+                                  />
+
+                                  <ProductionInput
+                                    value={product.reproduction}
+                                    disabled={!isEditable}
+                                    onChange={(value) =>
+                                      updateProduct(
+                                        product.production_day_product_id,
+                                        "reproduction",
+                                        value,
+                                      )
+                                    }
+                                  />
+
+                                  <ProductionInput
+                                    value={product.losses}
+                                    disabled={!isEditable}
+                                    onChange={(value) =>
+                                      updateProduct(
+                                        product.production_day_product_id,
+                                        "losses",
+                                        value,
+                                      )
+                                    }
+                                  />
+
+                                  <ProductionInput
+                                    value={product.sales}
+                                    disabled={!isEditable}
+                                    onChange={(value) =>
+                                      updateProduct(
+                                        product.production_day_product_id,
+                                        "sales",
+                                        value,
+                                      )
+                                    }
+                                  />
+
+                                  <ProductionInput
+                                    value={product.stock_end}
+                                    disabled={!isEditable}
+                                    onChange={(value) =>
+                                      updateProduct(
+                                        product.production_day_product_id,
+                                        "stock_end",
+                                        value,
+                                      )
+                                    }
+                                  />
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    ),
+                  )}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-/*
-|--------------------------------------------------------------------------
-| Input numérique de production
-|--------------------------------------------------------------------------
-*/
+function getStatusLabel(status: ProductionStatus): string {
+  switch (status) {
+    case "in_progress":
+      return "En cours";
+
+    case "finished":
+      return "Terminée";
+
+    case "closed":
+      return "Clôturée";
+  }
+}
 
 function ProductionInput({
   value,
@@ -739,10 +829,6 @@ function ProductionInput({
           border: "1px solid #cbd5e1",
           borderRadius: 6,
           textAlign: "center",
-
-          /*
-           * Visuel spécifique aux champs impossibles.
-           */
           background: disabled ? "#e2e8f0" : "white",
           cursor: disabled ? "not-allowed" : "text",
           color: disabled ? "#94a3b8" : "#0f172a",
@@ -752,12 +838,6 @@ function ProductionInput({
   );
 }
 
-/*
-|--------------------------------------------------------------------------
-| Style des en-têtes
-|--------------------------------------------------------------------------
-*/
-
 const headerCellStyle: React.CSSProperties = {
   textAlign: "left",
   padding: "10px 12px",
@@ -766,12 +846,6 @@ const headerCellStyle: React.CSSProperties = {
   whiteSpace: "nowrap",
   fontSize: 13,
 };
-
-/*
-|--------------------------------------------------------------------------
-| Style des cellules
-|--------------------------------------------------------------------------
-*/
 
 const bodyCellStyle: React.CSSProperties = {
   padding: "9px 12px",
