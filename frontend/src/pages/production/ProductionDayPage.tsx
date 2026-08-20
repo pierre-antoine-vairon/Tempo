@@ -132,6 +132,30 @@ type FinishProductionResponse =
   | FinishNeedsConfirmationResponse
   | FinishSuccessResponse;
 
+type CloseProductionResponse = {
+  ok: true;
+  already_closed?: boolean;
+
+  day: {
+    id: number;
+    date: string;
+    status: "closed";
+    closed_at: string | null;
+  };
+};
+
+type ReopenProductionResponse = {
+  ok: true;
+
+  day: {
+    id: number;
+    date: string;
+    status: "in_progress";
+  };
+
+  reason: string | null;
+};
+
 type EditableField =
   | "production"
   | "reproduction"
@@ -163,7 +187,8 @@ export default function ProductionDayPage() {
   const [saving, setSaving] = useState(false);
 
   const [finishing, setFinishing] = useState(false);
-
+  const [closing, setClosing] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const [finishConfirmation, setFinishConfirmation] =
     useState<FinishNeedsConfirmationResponse | null>(null);
 
@@ -460,6 +485,104 @@ export default function ProductionDayPage() {
     }
   }
 
+  async function closeProduction() {
+    if (!day || day.status !== "finished") {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Clôturer cette production ? La feuille restera en lecture seule.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setClosing(true);
+      setError(null);
+      setSavedMessage(null);
+      setFinishConfirmation(null);
+
+      await apiPost<
+        CloseProductionResponse,
+        {
+          site_id: number;
+          date: string;
+        }
+      >("/production/day/close", {
+        site_id: siteId,
+        date,
+      });
+
+      setSavedMessage("Production clôturée.");
+
+      await loadProduction();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de clôturer la production.",
+      );
+    } finally {
+      setClosing(false);
+    }
+  }
+
+  async function reopenProduction() {
+    if (!day || day.status !== "closed") {
+      return;
+    }
+
+    const reason = window.prompt("Pourquoi réouvrir cette production ?", "");
+
+    /*
+     * Annuler le prompt = aucune action.
+     */
+    if (reason === null) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Réouvrir cette production ? Elle redeviendra modifiable.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setReopening(true);
+      setError(null);
+      setSavedMessage(null);
+      setFinishConfirmation(null);
+
+      await apiPost<
+        ReopenProductionResponse,
+        {
+          site_id: number;
+          date: string;
+          reason: string | null;
+        }
+      >("/production/day/reopen", {
+        site_id: siteId,
+        date,
+        reason: reason.trim() === "" ? null : reason.trim(),
+      });
+
+      setSavedMessage("Production réouverte.");
+
+      await loadProduction();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de réouvrir la production.",
+      );
+    } finally {
+      setReopening(false);
+    }
+  }
   /*
   |--------------------------------------------------------------------------
   | Regroupement Famille -> Catégorie -> Produits
@@ -606,6 +729,44 @@ export default function ProductionDayPage() {
               }}
             >
               {finishing ? "Finalisation..." : "Terminer"}
+            </button>
+          )}
+
+          {day?.status === "finished" && (
+            <button
+              type="button"
+              onClick={() => void closeProduction()}
+              disabled={closing}
+              style={{
+                padding: "10px 16px",
+                border: 0,
+                borderRadius: 8,
+                cursor: closing ? "not-allowed" : "pointer",
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+              }}
+            >
+              {closing ? "Clôture..." : "Clôturer"}
+            </button>
+          )}
+
+          {day?.status === "closed" && (
+            <button
+              type="button"
+              onClick={() => void reopenProduction()}
+              disabled={reopening}
+              style={{
+                padding: "10px 16px",
+                border: "1px solid #0f172a",
+                borderRadius: 8,
+                cursor: reopening ? "not-allowed" : "pointer",
+                background: "white",
+                color: "#0f172a",
+                fontWeight: 600,
+              }}
+            >
+              {reopening ? "Réouverture..." : "Réouvrir"}
             </button>
           )}
         </div>
