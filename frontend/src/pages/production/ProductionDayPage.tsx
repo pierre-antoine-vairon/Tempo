@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiGet, apiPut } from "../api";
+import { apiGet, apiPut } from "../../api";
 
 type NullableNumber = number | null;
 
@@ -81,7 +81,7 @@ function getTodayLocal(): string {
 |--------------------------------------------------------------------------
 */
 
-export default function ProductionPage() {
+export default function ProductionDayPage() {
   const [date, setDate] = useState(getTodayLocal());
   const [products, setProducts] = useState<ProductionProduct[]>([]);
 
