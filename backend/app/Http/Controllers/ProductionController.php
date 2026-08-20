@@ -1677,10 +1677,6 @@ class ProductionController extends Controller
         |--------------------------------------------------------------------------
         | 1. Recherche et verrouillage de la journée
         |--------------------------------------------------------------------------
-        |
-        | lockForUpdate évite que deux utilisateurs terminent
-        | exactement la même feuille simultanément.
-        |
         */
 
         $day = DB::table('y_production_days')
@@ -1702,9 +1698,6 @@ class ProductionController extends Controller
         |--------------------------------------------------------------------------
         | 2. Idempotence
         |--------------------------------------------------------------------------
-        |
-        | Si elle est déjà finished, on ne refait rien.
-        |
         */
 
         if ($day->status === 'finished') {
@@ -1724,9 +1717,6 @@ class ProductionController extends Controller
         |--------------------------------------------------------------------------
         | 3. Une journée clôturée ne peut pas être terminée
         |--------------------------------------------------------------------------
-        |
-        | Elle devra d'abord être réouverte par un manager.
-        |
         */
 
         if ($day->status === 'closed') {
@@ -1814,17 +1804,6 @@ class ProductionController extends Controller
         |--------------------------------------------------------------------------
         | 7. Détection des valeurs manquantes
         |--------------------------------------------------------------------------
-        |
-        | Champs applicables / éditables en V1 :
-        |
-        | - production
-        | - reproduction
-        | - losses
-        | - sales
-        | - stock_end
-        |
-        | stock_previous n'est PAS concerné.
-        |
         */
 
         $editableFields = [
@@ -1837,18 +1816,8 @@ class ProductionController extends Controller
 
         $missingValuesCount = 0;
 
-        /*
-         * Liste détaillée disponible pour le frontend.
-         */
         $missingProducts = [];
 
-        /*
-         * Warnings ciblés.
-         *
-         * Pour la V1 :
-         * stock_end manquant alors qu'une production
-         * ou reproduction a été renseignée.
-         */
         $warnings = [];
 
         foreach ($rows as $row) {
@@ -1863,8 +1832,8 @@ class ProductionController extends Controller
             }
 
             /*
-             * On conserve le détail si le frontend veut
-             * un jour afficher la liste complète.
+             * On conserve le détail des champs manquants
+             * pour chaque produit.
              */
             if (count($productMissingFields) > 0) {
                 $missingProducts[] = [
@@ -1884,14 +1853,9 @@ class ProductionController extends Controller
             | Warning Stock fin
             |--------------------------------------------------------------------------
             |
-            | On attire spécifiquement l'attention si :
-            |
-            | production > 0
-            | OU reproduction > 0
-            |
-            | ET
-            |
-            | stock_end = NULL
+            | Si production ou reproduction > 0
+            | ET stock_end = NULL
+            | → on attire l'attention.
             |
             */
 
@@ -1925,9 +1889,8 @@ class ProductionController extends Controller
         | 8. Confirmation nécessaire
         |--------------------------------------------------------------------------
         |
-        | Des valeurs sont encore NULL.
-        |
-        | On ne transforme JAMAIS silencieusement un NULL en 0.
+        | Tant que l'utilisateur n'a pas confirmé,
+        | aucun NULL n'est transformé silencieusement en 0.
         |
         */
 
@@ -1947,15 +1910,9 @@ class ProductionController extends Controller
                 'missing_values_count' =>
                     $missingValuesCount,
 
-                /*
-                 * Disponible pour une UX détaillée plus tard.
-                 */
                 'missing_products' =>
                     $missingProducts,
 
-                /*
-                 * Liste ciblée à mettre en avant dans l'interface.
-                 */
                 'warnings' =>
                     $warnings,
             ]);
@@ -1968,33 +1925,60 @@ class ProductionController extends Controller
         */
 
         $now = now('UTC');
+
         $zeroFilledValuesCount = 0;
 
         if (
             $missingValuesCount > 0
             && $confirmZeroFill
         ) {
-            foreach ($rows as $row) {
 
-                $updates = [];
+            /*
+             * On récupère toutes les entries de cette feuille.
+             */
+            $entryIds = $rows
+                ->pluck('entry_id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
 
-                foreach ($editableFields as $field) {
-                    if ($row->{$field} === null) {
-                        $updates[$field] = 0;
-                        $zeroFilledValuesCount++;
-                    }
-                }
+            /*
+             * Une seule requête SQL.
+             *
+             * COALESCE :
+             *
+             * NULL → 0
+             * valeur existante → conservée
+             */
+            DB::table('y_production_entries')
+                ->where('org_id', $orgId)
+                ->whereIn('id', $entryIds)
+                ->update([
+                    'production' =>
+                        DB::raw('COALESCE(production, 0)'),
 
-                if (count($updates) > 0) {
-                    $updates['updated_by'] = null;
-                    $updates['updated_at'] = $now;
+                    'reproduction' =>
+                        DB::raw('COALESCE(reproduction, 0)'),
 
-                    DB::table('y_production_entries')
-                        ->where('id', $row->entry_id)
-                        ->where('org_id', $orgId)
-                        ->update($updates);
-                }
-            }
+                    'losses' =>
+                        DB::raw('COALESCE(losses, 0)'),
+
+                    'sales' =>
+                        DB::raw('COALESCE(sales, 0)'),
+
+                    'stock_end' =>
+                        DB::raw('COALESCE(stock_end, 0)'),
+
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
+
+            /*
+             * Le nombre avait déjà été calculé
+             * pendant le contrôle.
+             */
+            $zeroFilledValuesCount =
+                $missingValuesCount;
         }
 
         /*
@@ -2044,7 +2028,7 @@ class ProductionController extends Controller
                     null,
 
                 /*
-                 * Pas encore d'auth.
+                 * Pas encore d'authentification utilisateur.
                  */
                 'created_by' =>
                     null,
