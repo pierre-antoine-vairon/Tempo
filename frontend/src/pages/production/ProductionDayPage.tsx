@@ -91,6 +91,47 @@ type SaveProductionResponse = {
   saved_entries: number;
 };
 
+type FinishWarning = {
+  code: string;
+  production_day_product_id: number;
+  product_name: string;
+  message: string;
+};
+
+type MissingProduct = {
+  production_day_product_id: number;
+  product_name: string;
+  fields: string[];
+};
+
+type FinishNeedsConfirmationResponse = {
+  ok: false;
+  requires_confirmation: true;
+  message: string;
+  missing_values_count: number;
+  missing_products: MissingProduct[];
+  warnings: FinishWarning[];
+};
+
+type FinishSuccessResponse = {
+  ok: true;
+  requires_confirmation?: false;
+  already_finished?: boolean;
+
+  day: {
+    id: number;
+    date: string;
+    status: "finished";
+  };
+
+  zero_filled_values_count?: number;
+  warnings?: FinishWarning[];
+};
+
+type FinishProductionResponse =
+  | FinishNeedsConfirmationResponse
+  | FinishSuccessResponse;
+
 type EditableField =
   | "production"
   | "reproduction"
@@ -120,6 +161,11 @@ export default function ProductionDayPage() {
   const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [finishing, setFinishing] = useState(false);
+
+  const [finishConfirmation, setFinishConfirmation] =
+    useState<FinishNeedsConfirmationResponse | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
@@ -340,6 +386,80 @@ export default function ProductionDayPage() {
     }
   }
 
+  async function finishProduction(confirmZeroFill = false) {
+    if (!day || day.status !== "in_progress") {
+      return;
+    }
+
+    /*
+     * Pour le moment, on oblige l'utilisateur à enregistrer
+     * ses modifications avant de terminer.
+     *
+     * Cela évite qu'une valeur visible dans le navigateur
+     * ne soit pas encore présente en base au moment du contrôle.
+     */
+    if (dirtyProductIds.size > 0) {
+      setError(
+        "Des modifications ne sont pas encore enregistrées. Enregistrez-les avant de terminer la production.",
+      );
+
+      return;
+    }
+
+    try {
+      setFinishing(true);
+      setError(null);
+      setSavedMessage(null);
+
+      const response = await apiPost<
+        FinishProductionResponse,
+        {
+          site_id: number;
+          date: string;
+          confirm_zero_fill: boolean;
+        }
+      >("/production/day/finish", {
+        site_id: siteId,
+        date,
+        confirm_zero_fill: confirmZeroFill,
+      });
+
+      /*
+       * Des valeurs NULL restent présentes.
+       *
+       * Le backend ne modifie encore rien.
+       * On demande explicitement confirmation à l'utilisateur.
+       */
+      if (!response.ok && response.requires_confirmation) {
+        setFinishConfirmation(response);
+        return;
+      }
+
+      /*
+       * La journée est maintenant terminée.
+       */
+      setFinishConfirmation(null);
+
+      const zeroFilled = response.zero_filled_values_count ?? 0;
+
+      setSavedMessage(
+        zeroFilled > 0
+          ? `Production terminée. ${zeroFilled} valeur(s) manquante(s) ont été mises à 0.`
+          : "Production terminée.",
+      );
+
+      await loadProduction();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de terminer la production.",
+      );
+    } finally {
+      setFinishing(false);
+    }
+  }
+
   /*
   |--------------------------------------------------------------------------
   | Regroupement Famille -> Catégorie -> Produits
@@ -469,6 +589,25 @@ export default function ProductionDayPage() {
               {saving ? "Enregistrement..." : "Enregistrer"}
             </button>
           )}
+
+          {isEditable && (
+            <button
+              type="button"
+              onClick={() => void finishProduction(false)}
+              disabled={finishing || saving}
+              style={{
+                padding: "10px 16px",
+                border: "1px solid #0f172a",
+                borderRadius: 8,
+                cursor: finishing || saving ? "not-allowed" : "pointer",
+                background: "white",
+                color: "#0f172a",
+                fontWeight: 600,
+              }}
+            >
+              {finishing ? "Finalisation..." : "Terminer"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -505,6 +644,91 @@ export default function ProductionDayPage() {
           }}
         >
           {savedMessage}
+        </div>
+      )}
+
+      {finishConfirmation && (
+        <div
+          style={{
+            padding: 18,
+            marginBottom: 20,
+            border: "1px solid #fbbf24",
+            background: "#fffbeb",
+            borderRadius: 10,
+          }}
+        >
+          <strong>Production incomplète</strong>
+
+          <p
+            style={{
+              marginTop: 8,
+              marginBottom: 8,
+            }}
+          >
+            {finishConfirmation.missing_values_count} valeur(s) ne sont pas
+            renseignée(s).
+          </p>
+
+          {finishConfirmation.warnings.length > 0 && (
+            <div
+              style={{
+                marginBottom: 16,
+                color: "#92400e",
+              }}
+            >
+              {finishConfirmation.warnings.map((warning) => (
+                <div
+                  key={`${warning.code}-${warning.production_day_product_id}`}
+                >
+                  <strong>{warning.product_name}</strong>
+                  {" : "}
+                  {warning.message}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setFinishConfirmation(null)}
+              disabled={finishing}
+              style={{
+                padding: "9px 14px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                background: "white",
+                cursor: "pointer",
+              }}
+            >
+              Revenir vérifier
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void finishProduction(true)}
+              disabled={finishing}
+              style={{
+                padding: "9px 14px",
+                border: 0,
+                borderRadius: 8,
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+                cursor: finishing ? "not-allowed" : "pointer",
+              }}
+            >
+              {finishing
+                ? "Finalisation..."
+                : "Mettre les valeurs restantes à 0 et terminer"}
+            </button>
+          </div>
         </div>
       )}
 
