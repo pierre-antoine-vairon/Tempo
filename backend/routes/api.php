@@ -55,6 +55,8 @@ Route::prefix('production')
         Route::get('/day', 'showDay');
         Route::put('/day', 'updateDay');
 
+        Route::get('/history', 'history');
+
         Route::get('/day/previous-stock', 'previewPreviousStock');
         Route::post('/day/previous-stock/refresh', 'refreshPreviousStock');
 

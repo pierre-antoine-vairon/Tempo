@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiGet, apiPost, apiPut } from "../../api";
 
 type NullableNumber = number | null;
@@ -204,8 +205,18 @@ function getTodayLocal(): string {
   return `${year}-${month}-${day}`;
 }
 
+function isValidDateParameter(value: string | null): value is string {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
 export default function ProductionDayPage() {
-  const [date, setDate] = useState(getTodayLocal());
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const requestedDate = searchParams.get("date");
+
+  const [date, setDate] = useState(() =>
+    isValidDateParameter(requestedDate) ? requestedDate : getTodayLocal(),
+  );
 
   const [day, setDay] = useState<ProductionDay | null>(null);
   const [products, setProducts] = useState<ProductionProduct[]>([]);
@@ -809,7 +820,15 @@ export default function ProductionDayPage() {
           <input
             type="date"
             value={date}
-            onChange={(event) => setDate(event.target.value)}
+            onChange={(event) => {
+              const newDate = event.target.value;
+
+              setDate(newDate);
+
+              setSearchParams({
+                date: newDate,
+              });
+            }}
             style={{
               padding: "9px 12px",
               border: "1px solid #cbd5e1",

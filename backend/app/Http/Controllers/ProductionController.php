@@ -3185,4 +3185,192 @@ class ProductionController extends Controller
         ]);
     });
     }
+
+    public function history(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        /*
+         * On limite volontairement le nombre de journées retournées.
+         * 90 jours suffisent largement pour la V1.
+         */
+        'limit' => [
+            'sometimes',
+            'integer',
+            'min:1',
+            'max:365',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $limit = (int) ($validated['limit'] ?? 90);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Lecture des journées
+    |--------------------------------------------------------------------------
+    |
+    | Une ligne = une journée de production.
+    |
+    | On ne retourne PAS encore toutes les données produits.
+    | L'historique sert d'abord à trouver une journée.
+    |
+    */
+
+    $days = DB::table('y_production_days as d')
+
+        ->where('d.org_id', $orgId)
+        ->where('d.site_id', $siteId)
+
+        ->select([
+            'd.id',
+            'd.production_date',
+            'd.status',
+
+            'd.started_at',
+            'd.finished_at',
+            'd.closed_at',
+
+            'd.created_at',
+            'd.updated_at',
+        ])
+
+        /*
+         * Nombre de produits réellement inclus
+         * dans le snapshot de cette journée.
+         */
+        ->selectSub(
+            function ($query) use (
+                $orgId,
+                $siteId
+            ) {
+                $query
+                    ->from(
+                        'y_production_day_products as dp'
+                    )
+
+                    ->selectRaw('COUNT(*)')
+
+                    ->whereColumn(
+                        'dp.production_day_id',
+                        'd.id'
+                    )
+
+                    ->where(
+                        'dp.org_id',
+                        $orgId
+                    )
+
+                    ->where(
+                        'dp.site_id',
+                        $siteId
+                    )
+
+                    ->where(
+                        'dp.is_included',
+                        1
+                    );
+            },
+            'products_count'
+        )
+
+        /*
+         * Plus récent en premier.
+         */
+        ->orderByDesc(
+            'd.production_date'
+        )
+
+        ->orderByDesc(
+            'd.id'
+        )
+
+        ->limit($limit)
+
+        ->get()
+
+        ->map(function ($day) {
+            return [
+                'id' =>
+                    (int) $day->id,
+
+                'date' =>
+                    $day->production_date,
+
+                'status' =>
+                    $day->status,
+
+                'products_count' =>
+                    (int) $day->products_count,
+
+                'started_at' =>
+                    $day->started_at,
+
+                'finished_at' =>
+                    $day->finished_at,
+
+                'closed_at' =>
+                    $day->closed_at,
+
+                'created_at' =>
+                    $day->created_at,
+
+                'updated_at' =>
+                    $day->updated_at,
+            ];
+        });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+
+        'org_id' =>
+            $orgId,
+
+        'site_id' =>
+            $siteId,
+
+        'count' =>
+            $days->count(),
+
+        'days' =>
+            $days,
+    ]);
+    }
 }
