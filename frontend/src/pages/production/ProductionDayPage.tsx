@@ -156,6 +156,37 @@ type ReopenProductionResponse = {
   reason: string | null;
 };
 
+type PreviousStockDifference = {
+  production_day_product_id: number;
+  entry_id: number;
+  product_id: number;
+  product_name: string;
+  current_stock_previous: NullableNumber;
+  suggested_stock_previous: NullableNumber;
+};
+
+type PreviousStockPreviewResponse = {
+  ok: true;
+  available: boolean;
+
+  reason?: string;
+
+  previous_date: string;
+  previous_day_status: ProductionStatus | null;
+
+  differences_count: number;
+  differences: PreviousStockDifference[];
+
+  message: string;
+};
+
+type RefreshPreviousStockResponse = {
+  ok: true;
+  updated_entries: number;
+  previous_date: string;
+  message: string;
+};
+
 type EditableField =
   | "production"
   | "reproduction"
@@ -189,6 +220,12 @@ export default function ProductionDayPage() {
   const [finishing, setFinishing] = useState(false);
   const [closing, setClosing] = useState(false);
   const [reopening, setReopening] = useState(false);
+  const [checkingPreviousStock, setCheckingPreviousStock] = useState(false);
+
+  const [refreshingPreviousStock, setRefreshingPreviousStock] = useState(false);
+
+  const [previousStockPreview, setPreviousStockPreview] =
+    useState<PreviousStockPreviewResponse | null>(null);
   const [finishConfirmation, setFinishConfirmation] =
     useState<FinishNeedsConfirmationResponse | null>(null);
 
@@ -248,6 +285,7 @@ export default function ProductionDayPage() {
 
   useEffect(() => {
     setSavedMessage(null);
+    setPreviousStockPreview(null);
     void loadProduction();
   }, [loadProduction]);
 
@@ -583,6 +621,106 @@ export default function ProductionDayPage() {
       setReopening(false);
     }
   }
+
+  async function checkPreviousStock() {
+    if (!day || day.status !== "in_progress") {
+      return;
+    }
+
+    /*
+     * On évite de recharger la feuille alors que des
+     * modifications utilisateur ne sont pas encore enregistrées.
+     */
+    if (dirtyProductIds.size > 0) {
+      setError(
+        "Enregistrez d'abord les modifications en cours avant de vérifier le stock J-1.",
+      );
+
+      return;
+    }
+
+    try {
+      setCheckingPreviousStock(true);
+      setError(null);
+      setSavedMessage(null);
+      setPreviousStockPreview(null);
+
+      const response = await apiGet<PreviousStockPreviewResponse>(
+        `/production/day/previous-stock?site_id=${siteId}&date=${date}`,
+      );
+
+      /*
+       * Pas de veille exploitable.
+       */
+      if (!response.available) {
+        setSavedMessage(response.message);
+        return;
+      }
+
+      /*
+       * Tout est déjà correct.
+       */
+      if (response.differences_count === 0) {
+        setSavedMessage("Le stock J-1 est déjà à jour.");
+        return;
+      }
+
+      /*
+       * Il existe des différences :
+       * on les présente avant toute modification.
+       */
+      setPreviousStockPreview(response);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de vérifier le stock J-1.",
+      );
+    } finally {
+      setCheckingPreviousStock(false);
+    }
+  }
+
+  async function refreshPreviousStock() {
+    if (!day || day.status !== "in_progress" || !previousStockPreview) {
+      return;
+    }
+
+    try {
+      setRefreshingPreviousStock(true);
+      setError(null);
+      setSavedMessage(null);
+
+      const response = await apiPost<
+        RefreshPreviousStockResponse,
+        {
+          site_id: number;
+          date: string;
+        }
+      >("/production/day/previous-stock/refresh", {
+        site_id: siteId,
+        date,
+      });
+
+      setPreviousStockPreview(null);
+
+      setSavedMessage(response.message);
+
+      /*
+       * On recharge pour afficher immédiatement
+       * les nouvelles valeurs Stock J-1.
+       */
+      await loadProduction();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible d'actualiser le stock J-1.",
+      );
+    } finally {
+      setRefreshingPreviousStock(false);
+    }
+  }
   /*
   |--------------------------------------------------------------------------
   | Regroupement Famille -> Catégorie -> Produits
@@ -692,6 +830,33 @@ export default function ProductionDayPage() {
             >
               {getStatusLabel(day.status)}
             </span>
+          )}
+
+          {isEditable && (
+            <button
+              type="button"
+              onClick={() => void checkPreviousStock()}
+              disabled={
+                checkingPreviousStock ||
+                refreshingPreviousStock ||
+                saving ||
+                finishing
+              }
+              style={{
+                padding: "10px 16px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                cursor:
+                  checkingPreviousStock || refreshingPreviousStock
+                    ? "not-allowed"
+                    : "pointer",
+                background: "white",
+                color: "#334155",
+                fontWeight: 600,
+              }}
+            >
+              {checkingPreviousStock ? "Vérification..." : "Vérifier stock J-1"}
+            </button>
           )}
 
           {isEditable && (
@@ -888,6 +1053,113 @@ export default function ProductionDayPage() {
               {finishing
                 ? "Finalisation..."
                 : "Mettre les valeurs restantes à 0 et terminer"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {previousStockPreview && (
+        <div
+          style={{
+            padding: 18,
+            marginBottom: 20,
+            border: "1px solid #93c5fd",
+            background: "#eff6ff",
+            borderRadius: 10,
+          }}
+        >
+          <strong>Stock J-1 à actualiser</strong>
+
+          <p
+            style={{
+              marginTop: 8,
+              marginBottom: 14,
+            }}
+          >
+            {previousStockPreview.differences_count} produit(s) présentent une
+            différence avec le stock final du{" "}
+            {previousStockPreview.previous_date}.
+          </p>
+
+          <div
+            style={{
+              maxHeight: 280,
+              overflowY: "auto",
+              marginBottom: 16,
+              border: "1px solid #bfdbfe",
+              borderRadius: 8,
+              background: "white",
+            }}
+          >
+            {previousStockPreview.differences.map((difference) => (
+              <div
+                key={difference.production_day_product_id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(180px, 1fr) 100px 100px",
+                  gap: 16,
+                  alignItems: "center",
+                  padding: "9px 12px",
+                  borderBottom: "1px solid #e2e8f0",
+                  maxWidth: 650,
+                }}
+              >
+                <strong>{difference.product_name}</strong>
+
+                <span>
+                  Actuel :{" "}
+                  <strong>{difference.current_stock_previous ?? "vide"}</strong>
+                </span>
+
+                <span>
+                  Nouveau :{" "}
+                  <strong>
+                    {difference.suggested_stock_previous ?? "vide"}
+                  </strong>
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviousStockPreview(null)}
+              disabled={refreshingPreviousStock}
+              style={{
+                padding: "9px 14px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                background: "white",
+                cursor: "pointer",
+              }}
+            >
+              Conserver les valeurs actuelles
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void refreshPreviousStock()}
+              disabled={refreshingPreviousStock}
+              style={{
+                padding: "9px 14px",
+                border: 0,
+                borderRadius: 8,
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+                cursor: refreshingPreviousStock ? "not-allowed" : "pointer",
+              }}
+            >
+              {refreshingPreviousStock
+                ? "Actualisation..."
+                : "Actualiser le stock J-1"}
             </button>
           </div>
         </div>

@@ -2463,4 +2463,726 @@ class ProductionController extends Controller
         ]);
     });
     }
+
+    public function previewPreviousStock(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'date' => [
+            'required',
+            'date_format:Y-m-d',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | 1. Journée courante
+    |--------------------------------------------------------------------------
+    */
+
+    $day = DB::table('y_production_days')
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->where('production_date', $date)
+        ->first();
+
+    if (!$day) {
+        return response()->json([
+            'error' => 'production_day_not_found',
+            'message' =>
+                'La feuille de production demandée n’existe pas.',
+        ], 404);
+    }
+
+    /*
+     * On n'actualise jamais une journée déjà terminée
+     * ou clôturée.
+     */
+    if ($day->status !== 'in_progress') {
+        return response()->json([
+            'error' => 'production_day_not_editable',
+            'message' =>
+                'Le stock J-1 ne peut être actualisé que sur une feuille en cours.',
+            'status' => $day->status,
+        ], 409);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 2. Veille calendaire
+    |--------------------------------------------------------------------------
+    */
+
+    $previousDate =
+        \Illuminate\Support\Carbon::createFromFormat(
+            'Y-m-d',
+            $date
+        )
+            ->subDay()
+            ->toDateString();
+
+    $previousDay = DB::table('y_production_days')
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->where('production_date', $previousDate)
+        ->first();
+
+    /*
+    |--------------------------------------------------------------------------
+    | 3. Journée précédente absente
+    |--------------------------------------------------------------------------
+    */
+
+    if (!$previousDay) {
+        return response()->json([
+            'ok' => true,
+            'available' => false,
+
+            'reason' =>
+                'previous_day_not_found',
+
+            'previous_date' =>
+                $previousDate,
+
+            'previous_day_status' =>
+                null,
+
+            'differences_count' => 0,
+            'differences' => [],
+
+            'message' =>
+                'Aucune feuille de production n’existe pour la veille.',
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 4. La veille doit être terminée ou clôturée
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        !in_array(
+            $previousDay->status,
+            [
+                'finished',
+                'closed',
+            ],
+            true
+        )
+    ) {
+        return response()->json([
+            'ok' => true,
+            'available' => false,
+
+            'reason' =>
+                'previous_day_not_final',
+
+            'previous_date' =>
+                $previousDate,
+
+            'previous_day_status' =>
+                $previousDay->status,
+
+            'differences_count' => 0,
+            'differences' => [],
+
+            'message' =>
+                'La production de la veille doit être terminée ou clôturée avant d’actualiser le stock J-1.',
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 5. Produits de la journée courante
+    |--------------------------------------------------------------------------
+    |
+    | On utilise le snapshot de la journée.
+    | On ne reconstruit rien depuis le catalogue courant.
+    |
+    */
+
+    $currentRows = DB::table(
+        'y_production_day_products as current_dp'
+    )
+
+        ->join(
+            'y_production_entries as current_e',
+            'current_e.production_day_product_id',
+            '=',
+            'current_dp.id'
+        )
+
+        ->where(
+            'current_dp.org_id',
+            $orgId
+        )
+
+        ->where(
+            'current_dp.site_id',
+            $siteId
+        )
+
+        ->where(
+            'current_dp.production_day_id',
+            $day->id
+        )
+
+        ->where(
+            'current_dp.is_included',
+            1
+        )
+
+        /*
+         * Les produits J ne peuvent jamais
+         * avoir de Stock J-1.
+         */
+        ->where(
+            'current_dp.conservation_snapshot',
+            '!=',
+            'J'
+        )
+
+        ->select([
+            'current_dp.id as production_day_product_id',
+            'current_dp.product_id',
+            'current_dp.product_name_snapshot as product_name',
+
+            'current_e.id as entry_id',
+            'current_e.stock_previous',
+        ])
+
+        ->get();
+
+    /*
+    |--------------------------------------------------------------------------
+    | 6. Stocks finaux de la veille
+    |--------------------------------------------------------------------------
+    */
+
+    $previousRows = DB::table(
+        'y_production_day_products as previous_dp'
+    )
+
+        ->join(
+            'y_production_entries as previous_e',
+            'previous_e.production_day_product_id',
+            '=',
+            'previous_dp.id'
+        )
+
+        ->where(
+            'previous_dp.org_id',
+            $orgId
+        )
+
+        ->where(
+            'previous_dp.site_id',
+            $siteId
+        )
+
+        ->where(
+            'previous_dp.production_day_id',
+            $previousDay->id
+        )
+
+        ->where(
+            'previous_dp.is_included',
+            1
+        )
+
+        ->select([
+            'previous_dp.product_id',
+            'previous_e.stock_end',
+        ])
+
+        ->get()
+
+        ->keyBy('product_id');
+
+    /*
+    |--------------------------------------------------------------------------
+    | 7. Comparaison
+    |--------------------------------------------------------------------------
+    */
+
+    $differences = [];
+
+    foreach ($currentRows as $currentRow) {
+
+        $previousRow =
+            $previousRows->get(
+                $currentRow->product_id
+            );
+
+        /*
+         * Produit absent de la feuille précédente :
+         * pas de stock à reporter.
+         */
+        $suggestedStock =
+            $previousRow
+                ? (
+                    $previousRow->stock_end === null
+                        ? null
+                        : (int) $previousRow->stock_end
+                )
+                : null;
+
+        $currentStock =
+            $currentRow->stock_previous === null
+                ? null
+                : (int) $currentRow->stock_previous;
+
+        /*
+         * Rien à signaler si la valeur est déjà identique.
+         */
+        if ($currentStock === $suggestedStock) {
+            continue;
+        }
+
+        $differences[] = [
+            'production_day_product_id' =>
+                (int) $currentRow->production_day_product_id,
+
+            'entry_id' =>
+                (int) $currentRow->entry_id,
+
+            'product_id' =>
+                (int) $currentRow->product_id,
+
+            'product_name' =>
+                $currentRow->product_name,
+
+            'current_stock_previous' =>
+                $currentStock,
+
+            'suggested_stock_previous' =>
+                $suggestedStock,
+        ];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | 8. Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+        'available' => true,
+
+        'previous_date' =>
+            $previousDate,
+
+        'previous_day_status' =>
+            $previousDay->status,
+
+        'differences_count' =>
+            count($differences),
+
+        'differences' =>
+            $differences,
+
+        'message' =>
+            count($differences) === 0
+                ? 'Le stock J-1 est déjà à jour.'
+                : count($differences)
+                    . ' stock(s) J-1 peuvent être actualisé(s).',
+    ]);
+    }
+
+    public function refreshPreviousStock(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'date' => [
+            'required',
+            'date_format:Y-m-d',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+    $date = $validated['date'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Transaction
+    |--------------------------------------------------------------------------
+    */
+
+    return DB::transaction(function () use (
+        $orgId,
+        $siteId,
+        $date
+    ) {
+
+        /*
+        |--------------------------------------------------------------------------
+        | 1. Journée courante
+        |--------------------------------------------------------------------------
+        */
+
+        $day = DB::table('y_production_days')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('production_date', $date)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$day) {
+            return response()->json([
+                'error' =>
+                    'production_day_not_found',
+
+                'message' =>
+                    'La feuille de production demandée n’existe pas.',
+            ], 404);
+        }
+
+        if ($day->status !== 'in_progress') {
+            return response()->json([
+                'error' =>
+                    'production_day_not_editable',
+
+                'message' =>
+                    'Le stock J-1 ne peut être actualisé que sur une feuille en cours.',
+
+                'status' =>
+                    $day->status,
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 2. Veille
+        |--------------------------------------------------------------------------
+        */
+
+        $previousDate =
+            \Illuminate\Support\Carbon::createFromFormat(
+                'Y-m-d',
+                $date
+            )
+                ->subDay()
+                ->toDateString();
+
+        $previousDay = DB::table('y_production_days')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where(
+                'production_date',
+                $previousDate
+            )
+            ->first();
+
+        if (!$previousDay) {
+            return response()->json([
+                'error' =>
+                    'previous_production_day_not_found',
+
+                'message' =>
+                    'Aucune feuille de production n’existe pour la veille.',
+            ], 409);
+        }
+
+        if (
+            !in_array(
+                $previousDay->status,
+                [
+                    'finished',
+                    'closed',
+                ],
+                true
+            )
+        ) {
+            return response()->json([
+                'error' =>
+                    'previous_production_day_not_final',
+
+                'message' =>
+                    'La production de la veille doit être terminée ou clôturée avant d’actualiser le stock J-1.',
+
+                'status' =>
+                    $previousDay->status,
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 3. Produits courants éligibles
+        |--------------------------------------------------------------------------
+        */
+
+        $currentRows = DB::table(
+            'y_production_day_products as current_dp'
+        )
+
+            ->join(
+                'y_production_entries as current_e',
+                'current_e.production_day_product_id',
+                '=',
+                'current_dp.id'
+            )
+
+            ->where(
+                'current_dp.org_id',
+                $orgId
+            )
+
+            ->where(
+                'current_dp.site_id',
+                $siteId
+            )
+
+            ->where(
+                'current_dp.production_day_id',
+                $day->id
+            )
+
+            ->where(
+                'current_dp.is_included',
+                1
+            )
+
+            ->where(
+                'current_dp.conservation_snapshot',
+                '!=',
+                'J'
+            )
+
+            ->select([
+                'current_dp.product_id',
+                'current_e.id as entry_id',
+                'current_e.stock_previous',
+            ])
+
+            ->get();
+
+        /*
+        |--------------------------------------------------------------------------
+        | 4. Stocks finaux de la veille
+        |--------------------------------------------------------------------------
+        */
+
+        $previousRows = DB::table(
+            'y_production_day_products as previous_dp'
+        )
+
+            ->join(
+                'y_production_entries as previous_e',
+                'previous_e.production_day_product_id',
+                '=',
+                'previous_dp.id'
+            )
+
+            ->where(
+                'previous_dp.org_id',
+                $orgId
+            )
+
+            ->where(
+                'previous_dp.site_id',
+                $siteId
+            )
+
+            ->where(
+                'previous_dp.production_day_id',
+                $previousDay->id
+            )
+
+            ->where(
+                'previous_dp.is_included',
+                1
+            )
+
+            ->select([
+                'previous_dp.product_id',
+                'previous_e.stock_end',
+            ])
+
+            ->get()
+
+            ->keyBy('product_id');
+
+        /*
+        |--------------------------------------------------------------------------
+        | 5. Valeurs réellement différentes
+        |--------------------------------------------------------------------------
+        */
+
+        $changes = [];
+
+        foreach ($currentRows as $currentRow) {
+
+            $previousRow =
+                $previousRows->get(
+                    $currentRow->product_id
+                );
+
+            $suggestedStock =
+                $previousRow
+                    ? (
+                        $previousRow->stock_end === null
+                            ? null
+                            : (int) $previousRow->stock_end
+                    )
+                    : null;
+
+            $currentStock =
+                $currentRow->stock_previous === null
+                    ? null
+                    : (int) $currentRow->stock_previous;
+
+            if ($currentStock === $suggestedStock) {
+                continue;
+            }
+
+            $changes[] = [
+                'entry_id' =>
+                    (int) $currentRow->entry_id,
+
+                'stock_previous' =>
+                    $suggestedStock,
+            ];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 6. Rien à modifier
+        |--------------------------------------------------------------------------
+        */
+
+        if (count($changes) === 0) {
+            return response()->json([
+                'ok' => true,
+
+                'updated_entries' =>
+                    0,
+
+                'previous_date' =>
+                    $previousDate,
+
+                'message' =>
+                    'Le stock J-1 est déjà à jour.',
+            ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 7. UPDATE groupé
+        |--------------------------------------------------------------------------
+        |
+        | Chaque produit peut recevoir une valeur différente,
+        | donc on utilise un CASE SQL.
+        |
+        */
+
+        $entryIds = [];
+        $cases = [];
+
+        foreach ($changes as $change) {
+
+            $entryId =
+                (int) $change['entry_id'];
+
+            $entryIds[] =
+                $entryId;
+
+            $valueSql =
+                $change['stock_previous'] === null
+                    ? 'NULL'
+                    : (string) (
+                        (int) $change['stock_previous']
+                    );
+
+            $cases[] =
+                'WHEN '
+                . $entryId
+                . ' THEN '
+                . $valueSql;
+        }
+
+        $caseSql =
+            'CASE id '
+            . implode(' ', $cases)
+            . ' ELSE stock_previous END';
+
+        $now = now('UTC');
+
+        DB::table('y_production_entries')
+
+            ->where(
+                'org_id',
+                $orgId
+            )
+
+            ->where(
+                'site_id',
+                $siteId
+            )
+
+            ->whereIn(
+                'id',
+                $entryIds
+            )
+
+            ->update([
+                'stock_previous' =>
+                    DB::raw($caseSql),
+
+                'updated_by' =>
+                    null,
+
+                'updated_at' =>
+                    $now,
+            ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | 8. Réponse
+        |--------------------------------------------------------------------------
+        */
+
+        return response()->json([
+            'ok' => true,
+
+            'updated_entries' =>
+                count($changes),
+
+            'previous_date' =>
+                $previousDate,
+
+            'message' =>
+                count($changes)
+                . ' stock(s) J-1 ont été actualisé(s).',
+        ]);
+    });
+    }
 }
