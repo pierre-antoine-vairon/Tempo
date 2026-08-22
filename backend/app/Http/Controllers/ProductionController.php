@@ -3373,4 +3373,498 @@ class ProductionController extends Controller
             $days,
     ]);
     }
+
+    public function products(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+    ]);
+
+    $orgId = (int) config('tempo.default_org_id');
+    $siteId = (int) $validated['site_id'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' => 'site_not_found',
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Catalogue
+    |--------------------------------------------------------------------------
+    |
+    | Structure :
+    |
+    | Famille
+    |   -> Catégorie
+    |      -> Produits
+    |
+    | On retourne également les éléments inactifs :
+    | la page Produits doit permettre de les réactiver.
+    |
+    */
+
+    $rows = DB::table('y_products as p')
+
+        ->join(
+            'y_product_categories as c',
+            'c.id',
+            '=',
+            'p.category_id'
+        )
+
+        ->join(
+            'y_product_families as f',
+            'f.id',
+            '=',
+            'c.family_id'
+        )
+
+        ->where('p.org_id', $orgId)
+        ->where('p.site_id', $siteId)
+
+        ->where('c.org_id', $orgId)
+        ->where('c.site_id', $siteId)
+
+        ->where('f.org_id', $orgId)
+        ->where('f.site_id', $siteId)
+
+        ->select([
+            /*
+             * Produit
+             */
+            'p.id as product_id',
+            'p.name as product_name',
+            'p.conservation',
+            'p.display_order as product_order',
+            'p.is_active as product_is_active',
+
+            /*
+             * Catégorie
+             */
+            'c.id as category_id',
+            'c.name as category_name',
+            'c.display_order as category_order',
+            'c.is_active as category_is_active',
+
+            /*
+             * Famille
+             */
+            'f.id as family_id',
+            'f.name as family_name',
+            'f.display_order as family_order',
+            'f.is_active as family_is_active',
+        ])
+
+        ->orderBy('f.display_order')
+        ->orderBy('f.name')
+
+        ->orderBy('c.display_order')
+        ->orderBy('c.name')
+
+        ->orderBy('p.display_order')
+        ->orderBy('p.name')
+
+        ->get()
+
+        ->map(function ($row) {
+            return [
+                'id' =>
+                    (int) $row->product_id,
+
+                'name' =>
+                    $row->product_name,
+
+                'conservation' =>
+                    $row->conservation,
+
+                'display_order' =>
+                    (int) $row->product_order,
+
+                'is_active' =>
+                    (bool) $row->product_is_active,
+
+                'category' => [
+                    'id' =>
+                        (int) $row->category_id,
+
+                    'name' =>
+                        $row->category_name,
+
+                    'display_order' =>
+                        (int) $row->category_order,
+
+                    'is_active' =>
+                        (bool) $row->category_is_active,
+                ],
+
+                'family' => [
+                    'id' =>
+                        (int) $row->family_id,
+
+                    'name' =>
+                        $row->family_name,
+
+                    'display_order' =>
+                        (int) $row->family_order,
+
+                    'is_active' =>
+                        (bool) $row->family_is_active,
+                ],
+            ];
+        });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Compteurs
+    |--------------------------------------------------------------------------
+    */
+
+    $activeCount =
+        $rows
+            ->where('is_active', true)
+            ->count();
+
+    $inactiveCount =
+        $rows
+            ->where('is_active', false)
+            ->count();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+
+        'org_id' =>
+            $orgId,
+
+        'site_id' =>
+            $siteId,
+
+        'products_count' =>
+            $rows->count(),
+
+        'active_count' =>
+            $activeCount,
+
+        'inactive_count' =>
+            $inactiveCount,
+
+        'products' =>
+            $rows->values(),
+    ]);
+    }
+
+    public function setProductActive(
+    Request $request,
+    int $productId
+    ) {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'is_active' => [
+            'required',
+            'boolean',
+        ],
+    ]);
+
+    $orgId =
+        (int) config('tempo.default_org_id');
+
+    $siteId =
+        (int) $validated['site_id'];
+
+    $isActive =
+        (bool) $validated['is_active'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' =>
+                'site_not_found',
+
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Produit + catégorie + famille
+    |--------------------------------------------------------------------------
+    */
+
+    $product = DB::table('y_products as p')
+
+        ->join(
+            'y_product_categories as c',
+            'c.id',
+            '=',
+            'p.category_id'
+        )
+
+        ->join(
+            'y_product_families as f',
+            'f.id',
+            '=',
+            'c.family_id'
+        )
+
+        ->where(
+            'p.id',
+            $productId
+        )
+
+        ->where(
+            'p.org_id',
+            $orgId
+        )
+
+        ->where(
+            'p.site_id',
+            $siteId
+        )
+
+        ->where(
+            'c.org_id',
+            $orgId
+        )
+
+        ->where(
+            'c.site_id',
+            $siteId
+        )
+
+        ->where(
+            'f.org_id',
+            $orgId
+        )
+
+        ->where(
+            'f.site_id',
+            $siteId
+        )
+
+        ->select([
+            'p.id',
+            'p.name',
+            'p.is_active',
+
+            'c.id as category_id',
+            'c.name as category_name',
+            'c.is_active as category_is_active',
+
+            'f.id as family_id',
+            'f.name as family_name',
+            'f.is_active as family_is_active',
+        ])
+
+        ->first();
+
+    if (!$product) {
+        return response()->json([
+            'error' =>
+                'product_not_found',
+
+            'message' =>
+                'Le produit demandé est introuvable pour ce site.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réactivation : parents obligatoirement actifs
+    |--------------------------------------------------------------------------
+    |
+    | Un produit marqué Actif dans une catégorie ou famille inactive
+    | ne serait malgré tout pas ajouté aux nouvelles feuilles.
+    |
+    | On évite donc cet état incohérent.
+    |
+    */
+
+    if (
+        $isActive
+        && (
+            !(bool) $product->category_is_active
+            || !(bool) $product->family_is_active
+        )
+    ) {
+        return response()->json([
+            'error' =>
+                'product_parent_inactive',
+
+            'message' =>
+                'Le produit ne peut pas être activé car sa catégorie ou sa famille est inactive.',
+
+            'category' => [
+                'id' =>
+                    (int) $product->category_id,
+
+                'name' =>
+                    $product->category_name,
+
+                'is_active' =>
+                    (bool) $product->category_is_active,
+            ],
+
+            'family' => [
+                'id' =>
+                    (int) $product->family_id,
+
+                'name' =>
+                    $product->family_name,
+
+                'is_active' =>
+                    (bool) $product->family_is_active,
+            ],
+        ], 409);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Idempotence
+    |--------------------------------------------------------------------------
+    */
+
+    $currentIsActive =
+        (bool) $product->is_active;
+
+    if (
+        $currentIsActive
+        === $isActive
+    ) {
+        return response()->json([
+            'ok' => true,
+            'changed' => false,
+
+            'product' => [
+                'id' =>
+                    (int) $product->id,
+
+                'name' =>
+                    $product->name,
+
+                'is_active' =>
+                    $currentIsActive,
+            ],
+
+            'message' =>
+                $currentIsActive
+                    ? 'Le produit est déjà actif.'
+                    : 'Le produit est déjà inactif.',
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mise à jour
+    |--------------------------------------------------------------------------
+    */
+
+    $now = now('UTC');
+
+    DB::table('y_products')
+
+        ->where(
+            'id',
+            $productId
+        )
+
+        ->where(
+            'org_id',
+            $orgId
+        )
+
+        ->where(
+            'site_id',
+            $siteId
+        )
+
+        ->update([
+            'is_active' =>
+                $isActive ? 1 : 0,
+
+            'updated_by' =>
+                null,
+
+            'updated_at' =>
+                $now,
+        ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+        'changed' => true,
+
+        'product' => [
+            'id' =>
+                (int) $product->id,
+
+            'name' =>
+                $product->name,
+
+            'is_active' =>
+                $isActive,
+        ],
+
+        'message' =>
+            $isActive
+                ? 'Produit activé.'
+                : 'Produit désactivé.',
+    ]);
+    }
 }

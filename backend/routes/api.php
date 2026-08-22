@@ -51,11 +51,16 @@ Route::prefix('production')
         Route::get('/', 'index');
         Route::put('/', 'update');
 
+        // Section produits
+        Route::get('/products', 'products');
+        Route::put('/products/{productId}/active', 'setProductActive');
+
         // Nouvelle architecture Production
         Route::get('/day', 'showDay');
         Route::put('/day', 'updateDay');
 
         Route::get('/history', 'history');
+
 
         Route::get('/day/previous-stock', 'previewPreviousStock');
         Route::post('/day/previous-stock/refresh', 'refreshPreviousStock');
