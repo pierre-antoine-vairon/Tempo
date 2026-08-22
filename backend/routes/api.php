@@ -53,6 +53,7 @@ Route::prefix('production')
 
         // Section produits
         Route::get('/products', 'products');
+        Route::put('/products/{productId}', 'updateProduct');
         Route::put('/products/{productId}/active', 'setProductActive');
 
         // Nouvelle architecture Production

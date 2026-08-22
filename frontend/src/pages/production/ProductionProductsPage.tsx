@@ -54,6 +54,12 @@ type SetProductActiveResponse = {
   message: string;
 };
 
+type UpdateProductResponse = {
+  ok: true;
+  product: Product;
+  message: string;
+};
+
 export default function ProductionProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -76,6 +82,16 @@ export default function ProductionProductsPage() {
   );
 
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const [editingProductId, setEditingProductId] = useState<number | null>(null);
+
+  const [editName, setEditName] = useState("");
+
+  const [editCategoryId, setEditCategoryId] = useState<number | null>(null);
+
+  const [editConservation, setEditConservation] = useState("");
+
+  const [savingEdit, setSavingEdit] = useState(false);
 
   /*
   |--------------------------------------------------------------------------
@@ -193,6 +209,78 @@ export default function ProductionProductsPage() {
     }
   }
 
+  function startEditingProduct(product: Product) {
+    setEditingProductId(product.id);
+
+    setEditName(product.name);
+
+    setEditCategoryId(product.category.id);
+
+    setEditConservation(product.conservation ?? "J");
+
+    setError(null);
+    setSuccessMessage(null);
+  }
+
+  function cancelEditingProduct() {
+    setEditingProductId(null);
+    setEditName("");
+    setEditCategoryId(null);
+    setEditConservation("");
+  }
+
+  async function saveProductEdit() {
+    if (editingProductId === null || editCategoryId === null) {
+      return;
+    }
+
+    const trimmedName = editName.trim();
+
+    if (trimmedName === "") {
+      setError("Le nom du produit ne peut pas être vide.");
+      return;
+    }
+
+    try {
+      setSavingEdit(true);
+      setError(null);
+      setSuccessMessage(null);
+
+      const response = await apiPut<
+        UpdateProductResponse,
+        {
+          site_id: number;
+          name: string;
+          category_id: number;
+          conservation: string;
+        }
+      >(`/production/products/${editingProductId}`, {
+        site_id: siteId,
+        name: trimmedName,
+        category_id: editCategoryId,
+        conservation: editConservation,
+      });
+
+      setProducts((currentProducts) =>
+        currentProducts.map((product) =>
+          product.id === editingProductId ? response.product : product,
+        ),
+      );
+
+      setSuccessMessage(response.message);
+
+      cancelEditingProduct();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de modifier le produit.",
+      );
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
@@ -202,6 +290,36 @@ export default function ProductionProductsPage() {
   | Recherche + filtre
   |--------------------------------------------------------------------------
   */
+
+  const availableCategories = useMemo(() => {
+    const categories = new Map<
+      number,
+      ProductCategory & {
+        family: ProductFamily;
+      }
+    >();
+
+    for (const product of products) {
+      if (!categories.has(product.category.id)) {
+        categories.set(product.category.id, {
+          ...product.category,
+          family: product.family,
+        });
+      }
+    }
+
+    return Array.from(categories.values()).sort((a, b) => {
+      if (a.family.display_order !== b.family.display_order) {
+        return a.family.display_order - b.family.display_order;
+      }
+
+      if (a.display_order !== b.display_order) {
+        return a.display_order - b.display_order;
+      }
+
+      return a.name.localeCompare(b.name, "fr");
+    });
+  }, [products]);
 
   const filteredProducts = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase("fr");
@@ -364,6 +482,170 @@ export default function ProductionProductsPage() {
           }}
         >
           {successMessage}
+        </div>
+      )}
+
+      {editingProductId !== null && (
+        <div
+          style={{
+            padding: 18,
+            marginBottom: 22,
+            border: "1px solid #cbd5e1",
+            borderRadius: 10,
+            background: "white",
+          }}
+        >
+          <strong
+            style={{
+              display: "block",
+              marginBottom: 14,
+              fontSize: 17,
+            }}
+          >
+            Modifier le produit
+          </strong>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(220px, 1fr) 220px 140px",
+              gap: 12,
+              marginBottom: 14,
+            }}
+          >
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 5,
+                  color: "#64748b",
+                  fontSize: 13,
+                }}
+              >
+                Nom
+              </label>
+
+              <input
+                type="text"
+                value={editName}
+                onChange={(event) => setEditName(event.target.value)}
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "9px 10px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 5,
+                  color: "#64748b",
+                  fontSize: 13,
+                }}
+              >
+                Catégorie
+              </label>
+
+              <select
+                value={editCategoryId ?? ""}
+                onChange={(event) =>
+                  setEditCategoryId(Number(event.target.value))
+                }
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                  background: "white",
+                }}
+              >
+                {availableCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.family.name}
+                    {" — "}
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 5,
+                  color: "#64748b",
+                  fontSize: 13,
+                }}
+              >
+                Conservation
+              </label>
+
+              <select
+                value={editConservation}
+                onChange={(event) => setEditConservation(event.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                  background: "white",
+                }}
+              >
+                <option value="J">J</option>
+
+                <option value="J+1">J+1</option>
+
+                <option value="J+2">J+2</option>
+
+                <option value="J+3">J+3</option>
+              </select>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+            }}
+          >
+            <button
+              type="button"
+              onClick={cancelEditingProduct}
+              disabled={savingEdit}
+              style={{
+                padding: "8px 13px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                background: "white",
+                cursor: "pointer",
+              }}
+            >
+              Annuler
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void saveProductEdit()}
+              disabled={savingEdit}
+              style={{
+                padding: "8px 13px",
+                border: 0,
+                borderRadius: 8,
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+                cursor: savingEdit ? "not-allowed" : "pointer",
+              }}
+            >
+              {savingEdit ? "Enregistrement..." : "Enregistrer"}
+            </button>
+          </div>
         </div>
       )}
 
@@ -566,7 +848,7 @@ export default function ProductionProductsPage() {
                         display: "grid",
 
                         gridTemplateColumns:
-                          "minmax(220px, 1fr) 120px 120px 140px",
+                          "minmax(220px, 1fr) 120px 120px 110px 140px",
 
                         gap: 18,
                         alignItems: "center",
@@ -617,6 +899,23 @@ export default function ProductionProductsPage() {
                         </span>
                       </div>
 
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => startEditingProduct(product)}
+                          style={{
+                            padding: "7px 11px",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: 8,
+                            background: "white",
+                            color: "#0f172a",
+                            fontWeight: 600,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Modifier
+                        </button>
+                      </div>
                       <div>
                         <button
                           type="button"

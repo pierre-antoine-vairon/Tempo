@@ -3867,4 +3867,326 @@ class ProductionController extends Controller
                 : 'Produit désactivé.',
     ]);
     }
+
+    public function updateProduct(
+    Request $request,
+    int $productId
+    ) {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'name' => [
+            'required',
+            'string',
+            'max:255',
+        ],
+
+        'category_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'conservation' => [
+            'required',
+            'string',
+            'in:J,J+1,J+2,J+3',
+        ],
+    ]);
+
+    $orgId =
+        (int) config('tempo.default_org_id');
+
+    $siteId =
+        (int) $validated['site_id'];
+
+    $name =
+        trim($validated['name']);
+
+    $categoryId =
+        (int) $validated['category_id'];
+
+    $conservation =
+        $validated['conservation'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Nom vide après trim
+    |--------------------------------------------------------------------------
+    */
+
+    if ($name === '') {
+        return response()->json([
+            'error' =>
+                'product_name_empty',
+
+            'message' =>
+                'Le nom du produit ne peut pas être vide.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vérification du site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' =>
+                'site_not_found',
+
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Produit
+    |--------------------------------------------------------------------------
+    */
+
+    $product = DB::table('y_products')
+        ->where('id', $productId)
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->first();
+
+    if (!$product) {
+        return response()->json([
+            'error' =>
+                'product_not_found',
+
+            'message' =>
+                'Le produit demandé est introuvable pour ce site.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Catégorie cible + famille
+    |--------------------------------------------------------------------------
+    */
+
+    $category = DB::table(
+        'y_product_categories as c'
+    )
+
+        ->join(
+            'y_product_families as f',
+            'f.id',
+            '=',
+            'c.family_id'
+        )
+
+        ->where(
+            'c.id',
+            $categoryId
+        )
+
+        ->where(
+            'c.org_id',
+            $orgId
+        )
+
+        ->where(
+            'c.site_id',
+            $siteId
+        )
+
+        ->where(
+            'f.org_id',
+            $orgId
+        )
+
+        ->where(
+            'f.site_id',
+            $siteId
+        )
+
+        ->select([
+            'c.id as category_id',
+            'c.name as category_name',
+            'c.display_order as category_order',
+            'c.is_active as category_is_active',
+
+            'f.id as family_id',
+            'f.name as family_name',
+            'f.display_order as family_order',
+            'f.is_active as family_is_active',
+        ])
+
+        ->first();
+
+    if (!$category) {
+        return response()->json([
+            'error' =>
+                'category_not_found',
+
+            'message' =>
+                'La catégorie demandée est introuvable pour ce site.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Produit actif -> parents actifs obligatoires
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        (bool) $product->is_active
+        && (
+            !(bool) $category->category_is_active
+            || !(bool) $category->family_is_active
+        )
+    ) {
+        return response()->json([
+            'error' =>
+                'product_parent_inactive',
+
+            'message' =>
+                'Un produit actif ne peut pas être placé dans une catégorie ou une famille inactive.',
+        ], 409);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Nom déjà utilisé
+    |--------------------------------------------------------------------------
+    */
+
+    $duplicateName = DB::table('y_products')
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->where('name', $name)
+        ->where('id', '!=', $productId)
+        ->exists();
+
+    if ($duplicateName) {
+        return response()->json([
+            'error' =>
+                'product_name_already_exists',
+
+            'message' =>
+                'Un autre produit porte déjà ce nom.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mise à jour
+    |--------------------------------------------------------------------------
+    */
+
+    $now = now('UTC');
+
+    DB::table('y_products')
+
+        ->where(
+            'id',
+            $productId
+        )
+
+        ->where(
+            'org_id',
+            $orgId
+        )
+
+        ->where(
+            'site_id',
+            $siteId
+        )
+
+        ->update([
+            'name' =>
+                $name,
+
+            'category_id' =>
+                $categoryId,
+
+            'conservation' =>
+                $conservation,
+
+            'updated_by' =>
+                null,
+
+            'updated_at' =>
+                $now,
+        ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+
+        'product' => [
+            'id' =>
+                (int) $productId,
+
+            'name' =>
+                $name,
+
+            'conservation' =>
+                $conservation,
+
+            'display_order' =>
+                (int) $product->display_order,
+
+            'is_active' =>
+                (bool) $product->is_active,
+
+            'category' => [
+                'id' =>
+                    (int) $category->category_id,
+
+                'name' =>
+                    $category->category_name,
+
+                'display_order' =>
+                    (int) $category->category_order,
+
+                'is_active' =>
+                    (bool) $category->category_is_active,
+            ],
+
+            'family' => [
+                'id' =>
+                    (int) $category->family_id,
+
+                'name' =>
+                    $category->family_name,
+
+                'display_order' =>
+                    (int) $category->family_order,
+
+                'is_active' =>
+                    (bool) $category->family_is_active,
+            ],
+        ],
+
+        'message' =>
+            'Produit modifié.',
+    ]);
+    }
 }
