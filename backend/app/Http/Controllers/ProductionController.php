@@ -4189,4 +4189,340 @@ class ProductionController extends Controller
             'Produit modifié.',
     ]);
     }
+
+    public function createProduct(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'name' => [
+            'required',
+            'string',
+            'max:255',
+        ],
+
+        'category_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'conservation' => [
+            'required',
+            'string',
+            'in:J,J+1,J+2,J+3',
+        ],
+
+        'is_active' => [
+            'required',
+            'boolean',
+        ],
+    ]);
+
+    $orgId =
+        (int) config('tempo.default_org_id');
+
+    $siteId =
+        (int) $validated['site_id'];
+
+    $name =
+        trim($validated['name']);
+
+    $categoryId =
+        (int) $validated['category_id'];
+
+    $conservation =
+        $validated['conservation'];
+
+    $isActive =
+        (bool) $validated['is_active'];
+
+    /*
+    |--------------------------------------------------------------------------
+    | Nom vide après trim
+    |--------------------------------------------------------------------------
+    */
+
+    if ($name === '') {
+        return response()->json([
+            'error' =>
+                'product_name_empty',
+
+            'message' =>
+                'Le nom du produit ne peut pas être vide.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Site
+    |--------------------------------------------------------------------------
+    */
+
+    $siteExists = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->exists();
+
+    if (!$siteExists) {
+        return response()->json([
+            'error' =>
+                'site_not_found',
+
+            'message' =>
+                'Le site demandé est introuvable pour cette organisation.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Catégorie + famille
+    |--------------------------------------------------------------------------
+    */
+
+    $category = DB::table(
+        'y_product_categories as c'
+    )
+
+        ->join(
+            'y_product_families as f',
+            'f.id',
+            '=',
+            'c.family_id'
+        )
+
+        ->where(
+            'c.id',
+            $categoryId
+        )
+
+        ->where(
+            'c.org_id',
+            $orgId
+        )
+
+        ->where(
+            'c.site_id',
+            $siteId
+        )
+
+        ->where(
+            'f.org_id',
+            $orgId
+        )
+
+        ->where(
+            'f.site_id',
+            $siteId
+        )
+
+        ->select([
+            'c.id as category_id',
+            'c.name as category_name',
+            'c.display_order as category_order',
+            'c.is_active as category_is_active',
+
+            'f.id as family_id',
+            'f.name as family_name',
+            'f.display_order as family_order',
+            'f.is_active as family_is_active',
+        ])
+
+        ->first();
+
+    if (!$category) {
+        return response()->json([
+            'error' =>
+                'category_not_found',
+
+            'message' =>
+                'La catégorie demandée est introuvable pour ce site.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Produit actif -> catégorie et famille actives
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+        $isActive
+        && (
+            !(bool) $category->category_is_active
+            || !(bool) $category->family_is_active
+        )
+    ) {
+        return response()->json([
+            'error' =>
+                'product_parent_inactive',
+
+            'message' =>
+                'Un produit actif ne peut pas être créé dans une catégorie ou une famille inactive.',
+        ], 409);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Nom déjà utilisé
+    |--------------------------------------------------------------------------
+    */
+
+    $duplicateName = DB::table('y_products')
+
+        ->where(
+            'org_id',
+            $orgId
+        )
+
+        ->where(
+            'site_id',
+            $siteId
+        )
+
+        ->where(
+            'name',
+            $name
+        )
+
+        ->exists();
+
+    if ($duplicateName) {
+        return response()->json([
+            'error' =>
+                'product_name_already_exists',
+
+            'message' =>
+                'Un produit porte déjà ce nom.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Création
+    |--------------------------------------------------------------------------
+    |
+    | display_order reste à 1000 pour le moment.
+    | Nous traiterons l'ordre visuellement après.
+    |
+    | family/category sont encore renseignés temporairement
+    | pour conserver la compatibilité avec l'ancien modèle.
+    |
+    */
+
+    $now = now('UTC');
+
+    $productId = DB::table('y_products')
+        ->insertGetId([
+            'org_id' =>
+                $orgId,
+
+            'site_id' =>
+                $siteId,
+
+            'category_id' =>
+                $categoryId,
+
+            'name' =>
+                $name,
+
+            /*
+             * Colonnes legacy conservées temporairement.
+             */
+            'family' =>
+                $category->family_name,
+
+            'category' =>
+                $category->category_name,
+
+            'conservation' =>
+                $conservation,
+
+            'display_order' =>
+                1000,
+
+            'is_active' =>
+                $isActive ? 1 : 0,
+
+            'created_by' =>
+                null,
+
+            'created_at' =>
+                $now,
+
+            'updated_by' =>
+                null,
+
+            'updated_at' =>
+                $now,
+        ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+
+        'product' => [
+            'id' =>
+                (int) $productId,
+
+            'name' =>
+                $name,
+
+            'conservation' =>
+                $conservation,
+
+            'display_order' =>
+                1000,
+
+            'is_active' =>
+                $isActive,
+
+            'category' => [
+                'id' =>
+                    (int) $category->category_id,
+
+                'name' =>
+                    $category->category_name,
+
+                'display_order' =>
+                    (int) $category->category_order,
+
+                'is_active' =>
+                    (bool) $category->category_is_active,
+            ],
+
+            'family' => [
+                'id' =>
+                    (int) $category->family_id,
+
+                'name' =>
+                    $category->family_name,
+
+                'display_order' =>
+                    (int) $category->family_order,
+
+                'is_active' =>
+                    (bool) $category->family_is_active,
+            ],
+        ],
+
+        'message' =>
+            'Produit créé.',
+    ], 201);
+    }
 }

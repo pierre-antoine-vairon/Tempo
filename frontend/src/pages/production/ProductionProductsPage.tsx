@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiGet, apiPut } from "../../api";
+import { apiGet, apiPut, apiPost } from "../../api";
 
 type ProductFamily = {
   id: number;
@@ -60,6 +60,12 @@ type UpdateProductResponse = {
   message: string;
 };
 
+type CreateProductResponse = {
+  ok: true;
+  product: Product;
+  message: string;
+};
+
 export default function ProductionProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -92,6 +98,18 @@ export default function ProductionProductsPage() {
   const [editConservation, setEditConservation] = useState("");
 
   const [savingEdit, setSavingEdit] = useState(false);
+
+  const [creatingProduct, setCreatingProduct] = useState(false);
+
+  const [newName, setNewName] = useState("");
+
+  const [newCategoryId, setNewCategoryId] = useState<number | null>(null);
+
+  const [newConservation, setNewConservation] = useState("J");
+
+  const [newIsActive, setNewIsActive] = useState(false);
+
+  const [savingNewProduct, setSavingNewProduct] = useState(false);
 
   /*
   |--------------------------------------------------------------------------
@@ -281,6 +299,105 @@ export default function ProductionProductsPage() {
     }
   }
 
+  function startCreatingProduct() {
+    const firstCategory = availableCategories[0];
+
+    setCreatingProduct(true);
+
+    setNewName("");
+
+    setNewCategoryId(firstCategory?.id ?? null);
+
+    setNewConservation("J");
+
+    /*
+     * Par sécurité, un nouveau produit
+     * est inactif par défaut.
+     */
+    setNewIsActive(false);
+
+    setError(null);
+    setSuccessMessage(null);
+  }
+
+  function cancelCreatingProduct() {
+    setCreatingProduct(false);
+
+    setNewName("");
+
+    setNewCategoryId(null);
+
+    setNewConservation("J");
+
+    setNewIsActive(false);
+  }
+
+  async function saveNewProduct() {
+    if (newCategoryId === null) {
+      setError("Veuillez choisir une catégorie.");
+
+      return;
+    }
+
+    const trimmedName = newName.trim();
+
+    if (trimmedName === "") {
+      setError("Le nom du produit ne peut pas être vide.");
+
+      return;
+    }
+
+    try {
+      setSavingNewProduct(true);
+
+      setError(null);
+      setSuccessMessage(null);
+
+      const response = await apiPost<
+        CreateProductResponse,
+        {
+          site_id: number;
+          name: string;
+          category_id: number;
+          conservation: string;
+          is_active: boolean;
+        }
+      >("/production/products", {
+        site_id: siteId,
+        name: trimmedName,
+        category_id: newCategoryId,
+        conservation: newConservation,
+        is_active: newIsActive,
+      });
+
+      /*
+       * Ajout immédiat au catalogue local.
+       */
+      setProducts((currentProducts) => [...currentProducts, response.product]);
+
+      /*
+       * Compteurs.
+       */
+      setTotalCount((current) => current + 1);
+
+      if (response.product.is_active) {
+        setActiveCount((current) => current + 1);
+      } else {
+        setInactiveCount((current) => current + 1);
+      }
+
+      setSuccessMessage(response.message);
+
+      cancelCreatingProduct();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Impossible de créer le produit.",
+      );
+    } finally {
+      setSavingNewProduct(false);
+    }
+  }
+
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
@@ -432,13 +549,39 @@ export default function ProductionProductsPage() {
           marginBottom: 28,
         }}
       >
-        <h2
+        <div
           style={{
-            margin: 0,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 16,
           }}
         >
-          Produits
-        </h2>
+          <h2
+            style={{
+              margin: 0,
+            }}
+          >
+            Produits
+          </h2>
+
+          <button
+            type="button"
+            onClick={startCreatingProduct}
+            disabled={creatingProduct}
+            style={{
+              padding: "9px 14px",
+              border: 0,
+              borderRadius: 8,
+              background: "#0f172a",
+              color: "white",
+              fontWeight: 600,
+              cursor: creatingProduct ? "not-allowed" : "pointer",
+            }}
+          >
+            + Nouveau produit
+          </button>
+        </div>
 
         <p
           style={{
@@ -482,6 +625,188 @@ export default function ProductionProductsPage() {
           }}
         >
           {successMessage}
+        </div>
+      )}
+
+      {creatingProduct && (
+        <div
+          style={{
+            padding: 18,
+            marginBottom: 22,
+            border: "1px solid #cbd5e1",
+            borderRadius: 10,
+            background: "white",
+          }}
+        >
+          <strong
+            style={{
+              display: "block",
+              marginBottom: 14,
+              fontSize: 17,
+            }}
+          >
+            Nouveau produit
+          </strong>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(220px, 1fr) 220px 140px",
+              gap: 12,
+              marginBottom: 14,
+            }}
+          >
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 5,
+                  color: "#64748b",
+                  fontSize: 13,
+                }}
+              >
+                Nom
+              </label>
+
+              <input
+                type="text"
+                value={newName}
+                onChange={(event) => setNewName(event.target.value)}
+                placeholder="Nom du produit"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: "9px 10px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                }}
+              />
+            </div>
+
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 5,
+                  color: "#64748b",
+                  fontSize: 13,
+                }}
+              >
+                Catégorie
+              </label>
+
+              <select
+                value={newCategoryId ?? ""}
+                onChange={(event) =>
+                  setNewCategoryId(Number(event.target.value))
+                }
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                  background: "white",
+                }}
+              >
+                {availableCategories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.family.name}
+                    {" — "}
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  marginBottom: 5,
+                  color: "#64748b",
+                  fontSize: 13,
+                }}
+              >
+                Conservation
+              </label>
+
+              <select
+                value={newConservation}
+                onChange={(event) => setNewConservation(event.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "9px 10px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: 8,
+                  background: "white",
+                }}
+              >
+                <option value="J">J</option>
+
+                <option value="J+1">J+1</option>
+
+                <option value="J+2">J+2</option>
+
+                <option value="J+3">J+3</option>
+              </select>
+            </div>
+          </div>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 16,
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={newIsActive}
+              onChange={(event) => setNewIsActive(event.target.checked)}
+            />
+            Activer immédiatement ce produit
+          </label>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+            }}
+          >
+            <button
+              type="button"
+              onClick={cancelCreatingProduct}
+              disabled={savingNewProduct}
+              style={{
+                padding: "8px 13px",
+                border: "1px solid #cbd5e1",
+                borderRadius: 8,
+                background: "white",
+                cursor: "pointer",
+              }}
+            >
+              Annuler
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void saveNewProduct()}
+              disabled={savingNewProduct}
+              style={{
+                padding: "8px 13px",
+                border: 0,
+                borderRadius: 8,
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+                cursor: savingNewProduct ? "not-allowed" : "pointer",
+              }}
+            >
+              {savingNewProduct ? "Création..." : "Créer le produit"}
+            </button>
+          </div>
         </div>
       )}
 
