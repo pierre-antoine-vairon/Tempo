@@ -4725,4 +4725,402 @@ class ProductionController extends Controller
             'Ordre des produits enregistré.',
     ]);
     }
+
+    public function overview(Request $request)
+    {
+        /*
+        |--------------------------------------------------------------------------
+        | Validation
+        |--------------------------------------------------------------------------
+        */
+
+        $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'date' => [
+            'required',
+            'date_format:Y-m-d',
+        ],
+        ]);
+
+        $orgId =
+            (int) config('tempo.default_org_id');
+
+        $siteId =
+            (int) $validated['site_id'];
+
+        $date =
+            $validated['date'];
+
+        /*
+        |--------------------------------------------------------------------------
+        | Site
+        |--------------------------------------------------------------------------
+        */
+
+        $site = DB::table('y_sites')
+        ->where('id', $siteId)
+        ->where('org_id', $orgId)
+        ->first();
+
+        if (!$site) {
+        return response()->json([
+            'error' =>
+                'site_not_found',
+
+            'message' =>
+                'Le site demandé est introuvable.',
+        ], 404);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Date / semaine
+        |--------------------------------------------------------------------------
+        */
+
+        $currentDate =
+        \Illuminate\Support\Carbon::createFromFormat(
+            'Y-m-d',
+            $date
+        );
+
+        $weekStart =
+        $currentDate
+            ->copy()
+            ->startOfWeek(
+                \Illuminate\Support\Carbon::MONDAY
+            );
+
+        $weekEnd =
+        $weekStart
+            ->copy()
+            ->addDays(6);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Journées existantes de la semaine
+        |--------------------------------------------------------------------------
+        */
+
+        $existingDays = DB::table('y_production_days')
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+
+        ->whereBetween(
+            'production_date',
+            [
+                $weekStart->toDateString(),
+                $weekEnd->toDateString(),
+            ]
+        )
+
+        ->select([
+            'id',
+            'production_date',
+            'status',
+            'started_at',
+            'finished_at',
+            'closed_at',
+        ])
+
+        ->get()
+
+        ->keyBy('production_date');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Construction des 7 jours
+        |--------------------------------------------------------------------------
+        */
+
+        $week = [];
+
+        for ($index = 0; $index < 7; $index++) {
+
+        $dayDate =
+            $weekStart
+                ->copy()
+                ->addDays($index)
+                ->toDateString();
+
+        $existingDay =
+            $existingDays->get(
+                $dayDate
+            );
+
+        $week[] = [
+            'date' =>
+                $dayDate,
+
+            'status' =>
+                $existingDay
+                    ? $existingDay->status
+                    : 'not_started',
+
+            'production_day_id' =>
+                $existingDay
+                    ? (int) $existingDay->id
+                    : null,
+        ];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Journée sélectionnée / aujourd'hui
+        |--------------------------------------------------------------------------
+        */
+
+        $today =
+        $existingDays->get($date);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Catalogue
+        |--------------------------------------------------------------------------
+        */
+
+        $productsCount =
+        DB::table('y_products')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->count();
+
+        $activeProductsCount =
+        DB::table('y_products')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('is_active', 1)
+            ->count();
+
+        $inactiveProductsCount =
+        $productsCount -
+        $activeProductsCount;
+
+        /*
+        |--------------------------------------------------------------------------
+        | Nombre de produits dans la journée
+        |--------------------------------------------------------------------------
+        */
+
+        $todayProductsCount = 0;
+
+        if ($today) {
+        $todayProductsCount =
+            DB::table('y_production_day_products')
+                ->where(
+                    'org_id',
+                    $orgId
+                )
+                ->where(
+                    'site_id',
+                    $siteId
+                )
+                ->where(
+                    'production_day_id',
+                    $today->id
+                )
+                ->where(
+                    'is_included',
+                    1
+                )
+                ->count();
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Points d'attention
+        |--------------------------------------------------------------------------
+        */
+
+
+        $alerts = [];
+
+        /*
+         * Journée du jour non démarrée.
+         */
+        if (!$today) {
+            $alerts[] = [
+                'code' =>
+                    'today_not_started',
+
+                'level' =>
+                    'warning',
+
+                'message' =>
+                    'La production du jour n’est pas encore démarrée.',
+            ];
+        }
+
+        /*
+         * Journée du jour en cours.
+         */
+        if (
+            $today
+            && $today->status === 'in_progress'
+        ) {
+            $alerts[] = [
+                'code' =>
+                    'today_in_progress',
+
+                'level' =>
+                    'info',
+
+                'message' =>
+                    'La production du jour est en cours.',
+            ];
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Anciennes journées encore en cours
+        |--------------------------------------------------------------------------
+        |
+        | Toute journée antérieure à la date sélectionnée qui est encore
+        | "in_progress" représente un oubli potentiel de finalisation.
+        |
+        | Exemple :
+        | - 18/08 encore en cours
+        | - 20/08 encore en cours
+        | alors qu'on est le 23/08.
+        |
+        */
+
+        $oldOpenDays = DB::table('y_production_days')
+
+            ->where(
+        'org_id',
+        $orgId
+            )
+
+            ->where(
+        'site_id',
+        $siteId
+            )
+
+            ->where(
+        'production_date',
+        '<',
+        $date
+            )
+
+            ->where(
+        'status',
+        'in_progress'
+            )
+
+            ->orderByDesc(
+        'production_date'
+            )
+
+            ->pluck(
+        'production_date'
+            )
+
+        ->map(function ($dayDate) {
+            return
+                \Illuminate\Support\Carbon::createFromFormat(
+                    'Y-m-d',
+                    $dayDate
+                )
+                    ->format(
+                        'd/m/Y'
+                    );
+        })
+
+        ->values();
+        
+            if (
+        $oldOpenDays->count() > 0
+            ) {
+        $daysText =
+            $oldOpenDays->implode(
+                ', '
+            );
+        
+        $alerts[] = [
+            'code' =>
+                'previous_days_in_progress',
+        
+            'level' =>
+                'warning',
+        
+            'message' =>
+                $oldOpenDays->count() === 1
+                    ? 'Une journée précédente est encore en cours : '
+                        . $daysText
+                        . '.'
+                    : $oldOpenDays->count()
+                        . ' journées précédentes sont encore en cours : '
+                        . $daysText
+                        . '.',
+        ];
+            }
+        
+        /*
+        |--------------------------------------------------------------------------
+        | Réponse
+        |--------------------------------------------------------------------------
+        */
+        
+        return response()->json([
+            'ok' =>
+                true,
+        
+            'org_id' =>
+                $orgId,
+        
+            'site' => [
+                'id' =>
+                    (int) $site->id,
+        
+                'name' =>
+                    $site->name,
+            ],
+        
+            'date' =>
+                $date,
+        
+            'today' => [
+                'exists' =>
+                    $today !== null,
+        
+                'production_day_id' =>
+                    $today
+                        ? (int) $today->id
+                        : null,
+        
+                'status' =>
+                    $today
+                        ? $today->status
+                        : 'not_started',
+        
+                'products_count' =>
+                    $today
+                        ? $todayProductsCount
+                        : $activeProductsCount,
+            ],
+        
+            'week' =>
+                $week,
+        
+            'products' => [
+                'total' =>
+                    $productsCount,
+        
+                'active' =>
+                    $activeProductsCount,
+        
+                'inactive' =>
+                    $inactiveProductsCount,
+            ],
+        
+            'alerts' =>
+                $alerts,
+        ]);
+    }
 }

@@ -51,6 +51,8 @@ Route::prefix('production')
         Route::get('/', 'index');
         Route::put('/', 'update');
 
+        Route::get('/overview', 'overview');
+
         // Section produits
         Route::get('/products', 'products');
         Route::post('/products', 'createProduct');
