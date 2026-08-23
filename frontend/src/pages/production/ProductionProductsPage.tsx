@@ -66,6 +66,15 @@ type CreateProductResponse = {
   message: string;
 };
 
+type ReorderProductsResponse = {
+  ok: true;
+  category_id: number;
+  product_ids: number[];
+  message: string;
+};
+
+type MoveDirection = "up" | "down";
+
 export default function ProductionProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -110,6 +119,10 @@ export default function ProductionProductsPage() {
   const [newIsActive, setNewIsActive] = useState(false);
 
   const [savingNewProduct, setSavingNewProduct] = useState(false);
+
+  const [reorderingProductId, setReorderingProductId] = useState<number | null>(
+    null,
+  );
 
   /*
   |--------------------------------------------------------------------------
@@ -398,6 +411,118 @@ export default function ProductionProductsPage() {
     }
   }
 
+  async function moveProduct(product: Product, direction: MoveDirection) {
+    /*
+     * Important :
+     * on travaille toujours avec TOUS les produits
+     * de la catégorie, actifs et inactifs.
+     */
+    const categoryProducts = products
+      .filter(
+        (currentProduct) => currentProduct.category.id === product.category.id,
+      )
+      .slice()
+      .sort((a, b) => {
+        if (a.display_order !== b.display_order) {
+          return a.display_order - b.display_order;
+        }
+
+        return a.name.localeCompare(b.name, "fr");
+      });
+
+    const currentIndex = categoryProducts.findIndex(
+      (currentProduct) => currentProduct.id === product.id,
+    );
+
+    if (currentIndex === -1) {
+      return;
+    }
+
+    const targetIndex =
+      direction === "up" ? currentIndex - 1 : currentIndex + 1;
+
+    /*
+     * Produit déjà en haut ou en bas.
+     */
+    if (targetIndex < 0 || targetIndex >= categoryProducts.length) {
+      return;
+    }
+
+    const reorderedProducts = [...categoryProducts];
+
+    [reorderedProducts[currentIndex], reorderedProducts[targetIndex]] = [
+      reorderedProducts[targetIndex],
+      reorderedProducts[currentIndex],
+    ];
+
+    try {
+      setReorderingProductId(product.id);
+
+      setError(null);
+      setSuccessMessage(null);
+
+      const response = await apiPut<
+        ReorderProductsResponse,
+        {
+          site_id: number;
+          category_id: number;
+          product_ids: number[];
+        }
+      >("/production/products/order", {
+        site_id: siteId,
+
+        category_id: product.category.id,
+
+        product_ids: reorderedProducts.map(
+          (currentProduct) => currentProduct.id,
+        ),
+      });
+
+      /*
+       * Le backend attribue :
+       *
+       * 10
+       * 20
+       * 30
+       * ...
+       *
+       * On reproduit donc immédiatement
+       * ces valeurs dans le state local.
+       */
+      const orderByProductId = new Map<number, number>(
+        response.product_ids.map((productId, index) => [
+          productId,
+          (index + 1) * 10,
+        ]),
+      );
+
+      setProducts((currentProducts) =>
+        currentProducts.map((currentProduct) => {
+          const newOrder = orderByProductId.get(currentProduct.id);
+
+          if (newOrder === undefined) {
+            return currentProduct;
+          }
+
+          return {
+            ...currentProduct,
+            display_order: newOrder,
+          };
+        }),
+      );
+
+      setSuccessMessage(response.message);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de modifier l'ordre des produits.",
+      );
+    } finally {
+      setReorderingProductId(null);
+    }
+  }
+
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
@@ -512,6 +637,18 @@ export default function ProductionProductsPage() {
       }
 
       family.categories.get(product.category.id)!.products.push(product);
+    }
+
+    for (const family of grouped.values()) {
+      for (const category of family.categories.values()) {
+        category.products.sort((a, b) => {
+          if (a.display_order !== b.display_order) {
+            return a.display_order - b.display_order;
+          }
+
+          return a.name.localeCompare(b.name, "fr");
+        });
+      }
     }
 
     return Array.from(grouped.values());
@@ -1173,8 +1310,7 @@ export default function ProductionProductsPage() {
                         display: "grid",
 
                         gridTemplateColumns:
-                          "minmax(220px, 1fr) 120px 120px 110px 140px",
-
+                          "80px minmax(220px, 1fr) 120px 120px 110px 140px",
                         gap: 18,
                         alignItems: "center",
 
@@ -1188,6 +1324,63 @@ export default function ProductionProductsPage() {
                         opacity: product.is_active ? 1 : 0.65,
                       }}
                     >
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 4,
+                        }}
+                      >
+                        {statusFilter === "all" && search.trim() === "" && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void moveProduct(product, "up")}
+                              disabled={
+                                index === 0 || reorderingProductId !== null
+                              }
+                              title="Monter"
+                              style={{
+                                width: 30,
+                                height: 30,
+                                border: "1px solid #cbd5e1",
+                                borderRadius: 7,
+                                background: "white",
+                                cursor:
+                                  index === 0 || reorderingProductId !== null
+                                    ? "not-allowed"
+                                    : "pointer",
+                              }}
+                            >
+                              ↑
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => void moveProduct(product, "down")}
+                              disabled={
+                                index === categoryProducts.length - 1 ||
+                                reorderingProductId !== null
+                              }
+                              title="Descendre"
+                              style={{
+                                width: 30,
+                                height: 30,
+                                border: "1px solid #cbd5e1",
+                                borderRadius: 7,
+                                background: "white",
+                                cursor:
+                                  index === categoryProducts.length - 1 ||
+                                  reorderingProductId !== null
+                                    ? "not-allowed"
+                                    : "pointer",
+                              }}
+                            >
+                              ↓
+                            </button>
+                          </>
+                        )}
+                      </div>
+
                       <div>
                         <strong>{product.name}</strong>
                       </div>

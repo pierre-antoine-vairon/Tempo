@@ -4525,4 +4525,204 @@ class ProductionController extends Controller
             'Produit créé.',
     ], 201);
     }
+
+    public function reorderProducts(Request $request)
+    {
+    /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+    $validated = $request->validate([
+        'site_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'category_id' => [
+            'required',
+            'integer',
+            'min:1',
+        ],
+
+        'product_ids' => [
+            'required',
+            'array',
+            'min:1',
+        ],
+
+        'product_ids.*' => [
+            'required',
+            'integer',
+            'min:1',
+            'distinct',
+        ],
+    ]);
+
+    $orgId =
+        (int) config('tempo.default_org_id');
+
+    $siteId =
+        (int) $validated['site_id'];
+
+    $categoryId =
+        (int) $validated['category_id'];
+
+    $productIds =
+        collect($validated['product_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->values();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Catégorie
+    |--------------------------------------------------------------------------
+    */
+
+    $categoryExists = DB::table('y_product_categories')
+        ->where('id', $categoryId)
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->exists();
+
+    if (!$categoryExists) {
+        return response()->json([
+            'error' =>
+                'category_not_found',
+
+            'message' =>
+                'La catégorie demandée est introuvable.',
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Produits actuellement présents dans cette catégorie
+    |--------------------------------------------------------------------------
+    |
+    | On prend actifs ET inactifs.
+    |
+    */
+
+    $existingProductIds = DB::table('y_products')
+        ->where('org_id', $orgId)
+        ->where('site_id', $siteId)
+        ->where('category_id', $categoryId)
+        ->pluck('id')
+        ->map(fn ($id) => (int) $id)
+        ->sort()
+        ->values();
+
+    /*
+    |--------------------------------------------------------------------------
+    | Sécurité
+    |--------------------------------------------------------------------------
+    |
+    | Le frontend doit envoyer exactement tous les produits
+    | de la catégorie, ni plus ni moins.
+    |
+    */
+
+    if (
+        $existingProductIds->all()
+        !==
+        $productIds
+            ->sort()
+            ->values()
+            ->all()
+    ) {
+        return response()->json([
+            'error' =>
+                'invalid_product_order',
+
+            'message' =>
+                'La liste des produits ne correspond pas à la catégorie.',
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mise à jour
+    |--------------------------------------------------------------------------
+    |
+    | 10, 20, 30...
+    |
+    | On laisse volontairement des espaces entre les valeurs.
+    |
+    */
+
+    $orderedProductIds =
+        collect($validated['product_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->values();
+
+    $now = now('UTC');
+
+    DB::transaction(function () use (
+        $orderedProductIds,
+        $orgId,
+        $siteId,
+        $categoryId,
+        $now
+    ) {
+        foreach (
+            $orderedProductIds as
+            $index => $productId
+        ) {
+            DB::table('y_products')
+
+                ->where(
+                    'id',
+                    $productId
+                )
+
+                ->where(
+                    'org_id',
+                    $orgId
+                )
+
+                ->where(
+                    'site_id',
+                    $siteId
+                )
+
+                ->where(
+                    'category_id',
+                    $categoryId
+                )
+
+                ->update([
+                    'display_order' =>
+                        ($index + 1) * 10,
+
+                    'updated_by' =>
+                        null,
+
+                    'updated_at' =>
+                        $now,
+                ]);
+        }
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Réponse
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+        'ok' => true,
+
+        'category_id' =>
+            $categoryId,
+
+        'product_ids' =>
+            $orderedProductIds,
+
+        'message' =>
+            'Ordre des produits enregistré.',
+    ]);
+    }
 }
