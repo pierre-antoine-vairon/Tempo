@@ -15,20 +15,20 @@ class ProductionController extends Controller
      */
     public function index(Request $request)
     {
-    $orgId = (int) $request->query(
-        'org_id',
-        (int) config('tempo.default_org_id')
-    );
+        $orgId = (int) $request->query(
+            'org_id',
+            (int) config('tempo.default_org_id')
+        );
 
-    $validated = $request->validate([
-        'site_id' => ['required', 'integer', 'min:1'],
-        'date' => ['required', 'date_format:Y-m-d'],
-    ]);
+        $validated = $request->validate([
+            'site_id' => ['required', 'integer', 'min:1'],
+            'date' => ['required', 'date_format:Y-m-d'],
+        ]);
 
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
@@ -37,19 +37,19 @@ class ProductionController extends Controller
     |
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' => 'Site introuvable pour cette organisation.',
-        ], 404);
-    }
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' => 'Site introuvable pour cette organisation.',
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Lecture de la feuille de production
     |--------------------------------------------------------------------------
@@ -60,56 +60,56 @@ class ProductionController extends Controller
     |
     */
 
-    $rows = DB::table('y_products as p')
-        ->leftJoin('y_production_entries as e', function ($join) use (
-            $orgId,
-            $siteId,
-            $date
-        ) {
-            $join->on('e.product_id', '=', 'p.id')
-                ->where('e.org_id', '=', $orgId)
-                ->where('e.site_id', '=', $siteId)
-                ->where('e.production_date', '=', $date);
-        })
-        ->select([
-            'p.id as product_id',
-            'p.name',
-            'p.family',
-            'p.category',
-            'p.conservation',
+        $rows = DB::table('y_products as p')
+            ->leftJoin('y_production_entries as e', function ($join) use (
+                $orgId,
+                $siteId,
+                $date
+            ) {
+                $join->on('e.product_id', '=', 'p.id')
+                    ->where('e.org_id', '=', $orgId)
+                    ->where('e.site_id', '=', $siteId)
+                    ->where('e.production_date', '=', $date);
+            })
+            ->select([
+                'p.id as product_id',
+                'p.name',
+                'p.family',
+                'p.category',
+                'p.conservation',
 
-            'e.id as entry_id',
-            'e.production_date',
+                'e.id as entry_id',
+                'e.production_date',
 
-            /*
+                /*
              * Un produit avec une DLC J ne peut pas avoir
              * de stock provenant de la veille.
              *
              * Même si une ancienne mauvaise valeur existe en DB,
              * l'API retourne donc NULL.
              */
-            DB::raw("
+                DB::raw("
                 CASE
                     WHEN p.conservation = 'J' THEN NULL
                     ELSE CAST(e.stock_previous AS UNSIGNED)
                 END AS stock_previous
             "),
 
-            'e.production',
-            'e.reproduction',
-            'e.losses',
-            'e.sales',
-            'e.stock_end',
-        ])
-        ->where('p.org_id', $orgId)
-        ->where('p.site_id', $siteId)
-        ->where('p.is_active', 1)
+                'e.production',
+                'e.reproduction',
+                'e.losses',
+                'e.sales',
+                'e.stock_end',
+            ])
+            ->where('p.org_id', $orgId)
+            ->where('p.site_id', $siteId)
+            ->where('p.is_active', 1)
 
-        /*
+            /*
          * Ordre métier :
          * Salé d'abord, Sucré ensuite.
          */
-        ->orderByRaw("
+            ->orderByRaw("
             CASE
                 WHEN p.family = 'Salé' THEN 1
                 WHEN p.family = 'Sucré' THEN 2
@@ -117,23 +117,23 @@ class ProductionController extends Controller
             END
         ")
 
-        ->orderBy('p.category')
-        ->orderBy('p.name')
-        ->get()
-        ->map(function ($row) {
-            $row->stock_previous = $row->stock_previous === null
-            ? null
-            : (int) $row->stock_previous;
+            ->orderBy('p.category')
+            ->orderBy('p.name')
+            ->get()
+            ->map(function ($row) {
+                $row->stock_previous = $row->stock_previous === null
+                    ? null
+                    : (int) $row->stock_previous;
 
-            return $row;
-        });
+                return $row;
+            });
 
-    return response()->json([
-        'org_id' => $orgId,
-        'site_id' => $siteId,
-        'date' => $date,
-        'products' => $rows,
-    ]);
+        return response()->json([
+            'org_id' => $orgId,
+            'site_id' => $siteId,
+            'date' => $date,
+            'products' => $rows,
+        ]);
     }
 
     /**
@@ -147,12 +147,12 @@ class ProductionController extends Controller
      */
     public function update(Request $request)
     {
-    $orgId = (int) $request->query(
-        'org_id',
-        (int) config('tempo.default_org_id')
-    );
+        $orgId = (int) $request->query(
+            'org_id',
+            (int) config('tempo.default_org_id')
+        );
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation technique du payload
     |--------------------------------------------------------------------------
@@ -164,72 +164,72 @@ class ProductionController extends Controller
     |
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
 
-        'entries' => [
-            'present',
-            'array',
-        ],
+            'entries' => [
+                'present',
+                'array',
+            ],
 
-        'entries.*.product_id' => [
-            'required',
-            'integer',
-            'min:1',
-            'distinct',
-        ],
+            'entries.*.product_id' => [
+                'required',
+                'integer',
+                'min:1',
+                'distinct',
+            ],
 
-        'entries.*.stock_previous' => [
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.stock_previous' => [
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.production' => [
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.production' => [
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.reproduction' => [
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.reproduction' => [
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.losses' => [
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.losses' => [
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.sales' => [
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.sales' => [
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.stock_end' => [
-            'nullable',
-            'integer',
-            'min:0',
-        ],
-    ]);
+            'entries.*.stock_end' => [
+                'nullable',
+                'integer',
+                'min:0',
+            ],
+        ]);
 
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
-    $entries = $validated['entries'];
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
+        $entries = $validated['entries'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
@@ -238,19 +238,19 @@ class ProductionController extends Controller
     |
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' => 'Site introuvable pour cette organisation.',
-        ], 404);
-    }
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' => 'Site introuvable pour cette organisation.',
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Récupération des produits
     |--------------------------------------------------------------------------
@@ -263,27 +263,27 @@ class ProductionController extends Controller
     |
     */
 
-    $productIds = collect($entries)
-        ->pluck('product_id')
-        ->map(fn ($id) => (int) $id)
-        ->values()
-        ->all();
+        $productIds = collect($entries)
+            ->pluck('product_id')
+            ->map(fn($id) => (int) $id)
+            ->values()
+            ->all();
 
-    $productsById = collect();
+        $productsById = collect();
 
-    if (count($productIds) > 0) {
-        $productsById = DB::table('y_products')
-            ->select([
-                'id',
-                'conservation',
-            ])
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->whereIn('id', $productIds)
-            ->get()
-            ->keyBy('id');
+        if (count($productIds) > 0) {
+            $productsById = DB::table('y_products')
+                ->select([
+                    'id',
+                    'conservation',
+                ])
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->whereIn('id', $productIds)
+                ->get()
+                ->keyBy('id');
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | Vérification des produits
         |--------------------------------------------------------------------------
@@ -294,15 +294,15 @@ class ProductionController extends Controller
         |
         */
 
-        if ($productsById->count() !== count($productIds)) {
-            return response()->json([
-                'error' => 'product_not_found',
-                'message' => 'Un ou plusieurs produits sont invalides pour ce site.',
-            ], 422);
+            if ($productsById->count() !== count($productIds)) {
+                return response()->json([
+                    'error' => 'product_not_found',
+                    'message' => 'Un ou plusieurs produits sont invalides pour ce site.',
+                ], 422);
+            }
         }
-    }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Enregistrement transactionnel
     |--------------------------------------------------------------------------
@@ -312,28 +312,28 @@ class ProductionController extends Controller
     |
     */
 
-    $savedEntries = 0;
+        $savedEntries = 0;
 
-    DB::transaction(function () use (
-        $orgId,
-        $siteId,
-        $date,
-        $entries,
-        $productsById,
-        &$savedEntries
-    ) {
-        foreach ($entries as $entry) {
-            $productId = (int) $entry['product_id'];
+        DB::transaction(function () use (
+            $orgId,
+            $siteId,
+            $date,
+            $entries,
+            $productsById,
+            &$savedEntries
+        ) {
+            foreach ($entries as $entry) {
+                $productId = (int) $entry['product_id'];
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Informations du produit
             |--------------------------------------------------------------------------
             */
 
-            $product = $productsById->get($productId);
+                $product = $productsById->get($productId);
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Règle DLC J
             |--------------------------------------------------------------------------
@@ -346,9 +346,9 @@ class ProductionController extends Controller
             |
             */
 
-            $isSameDayOnly = $product->conservation === 'J';
+                $isSameDayOnly = $product->conservation === 'J';
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Valeurs métier
             |--------------------------------------------------------------------------
@@ -360,32 +360,32 @@ class ProductionController extends Controller
             |
             */
 
-            $values = [
-                'stock_previous' => $isSameDayOnly
-                    ? null
-                    : ($entry['stock_previous'] ?? null),
+                $values = [
+                    'stock_previous' => $isSameDayOnly
+                        ? null
+                        : ($entry['stock_previous'] ?? null),
 
-                'production' => $entry['production'] ?? null,
-                'reproduction' => $entry['reproduction'] ?? null,
-                'losses' => $entry['losses'] ?? null,
-                'sales' => $entry['sales'] ?? null,
-                'stock_end' => $entry['stock_end'] ?? null,
-            ];
+                    'production' => $entry['production'] ?? null,
+                    'reproduction' => $entry['reproduction'] ?? null,
+                    'losses' => $entry['losses'] ?? null,
+                    'sales' => $entry['sales'] ?? null,
+                    'stock_end' => $entry['stock_end'] ?? null,
+                ];
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Recherche d'une éventuelle ligne existante
             |--------------------------------------------------------------------------
             */
 
-            $existingEntry = DB::table('y_production_entries')
-                ->where('org_id', $orgId)
-                ->where('site_id', $siteId)
-                ->where('product_id', $productId)
-                ->where('production_date', $date)
-                ->first();
+                $existingEntry = DB::table('y_production_entries')
+                    ->where('org_id', $orgId)
+                    ->where('site_id', $siteId)
+                    ->where('product_id', $productId)
+                    ->where('production_date', $date)
+                    ->first();
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Ligne entièrement vide
             |--------------------------------------------------------------------------
@@ -395,128 +395,128 @@ class ProductionController extends Controller
             |
             */
 
-            $hasValue = count(
-                array_filter(
-                    $values,
-                    fn ($value) => $value !== null
-                )
-            ) > 0;
+                $hasValue = count(
+                    array_filter(
+                        $values,
+                        fn($value) => $value !== null
+                    )
+                ) > 0;
 
-            if (!$hasValue && !$existingEntry) {
-                continue;
-            }
+                if (!$hasValue && !$existingEntry) {
+                    continue;
+                }
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Mise à jour d'une ligne existante
             |--------------------------------------------------------------------------
             */
 
-            if ($existingEntry) {
+                if ($existingEntry) {
+                    DB::table('y_production_entries')
+                        ->where('id', $existingEntry->id)
+                        ->where('org_id', $orgId)
+                        ->update([
+                            'stock_previous' => $values['stock_previous'],
+                            'production' => $values['production'],
+                            'reproduction' => $values['reproduction'],
+                            'losses' => $values['losses'],
+                            'sales' => $values['sales'],
+                            'stock_end' => $values['stock_end'],
+                            'updated_at' => now(),
+                        ]);
+
+                    $savedEntries++;
+
+                    continue;
+                }
+
+                /*
+            |--------------------------------------------------------------------------
+            | Création d'une nouvelle ligne
+            |--------------------------------------------------------------------------
+            */
+
                 DB::table('y_production_entries')
-                    ->where('id', $existingEntry->id)
-                    ->where('org_id', $orgId)
-                    ->update([
+                    ->insert([
+                        'org_id' => $orgId,
+                        'site_id' => $siteId,
+                        'product_id' => $productId,
+                        'production_date' => $date,
+
                         'stock_previous' => $values['stock_previous'],
                         'production' => $values['production'],
                         'reproduction' => $values['reproduction'],
                         'losses' => $values['losses'],
                         'sales' => $values['sales'],
                         'stock_end' => $values['stock_end'],
-                        'updated_at' => now(),
-                    ]);
 
-                $savedEntries++;
-
-                continue;
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | Création d'une nouvelle ligne
-            |--------------------------------------------------------------------------
-            */
-
-            DB::table('y_production_entries')
-                ->insert([
-                    'org_id' => $orgId,
-                    'site_id' => $siteId,
-                    'product_id' => $productId,
-                    'production_date' => $date,
-
-                    'stock_previous' => $values['stock_previous'],
-                    'production' => $values['production'],
-                    'reproduction' => $values['reproduction'],
-                    'losses' => $values['losses'],
-                    'sales' => $values['sales'],
-                    'stock_end' => $values['stock_end'],
-
-                    /*
+                        /*
                      * Pas encore d'authentification utilisateur
                      * dans le MVP actuel.
                      *
                      * created_by / updated_by restent donc NULL.
                      */
 
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
 
-            $savedEntries++;
-        }
-    });
+                $savedEntries++;
+            }
+        });
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
-        'org_id' => $orgId,
-        'site_id' => $siteId,
-        'date' => $date,
-        'saved_entries' => $savedEntries,
-    ]);
+        return response()->json([
+            'ok' => true,
+            'org_id' => $orgId,
+            'site_id' => $siteId,
+            'date' => $date,
+            'saved_entries' => $savedEntries,
+        ]);
     }
 
     public function showDay(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => ['required', 'integer', 'min:1'],
-        'date' => ['required', 'date_format:Y-m-d'],
-    ]);
+        $validated = $request->validate([
+            'site_id' => ['required', 'integer', 'min:1'],
+            'date' => ['required', 'date_format:Y-m-d'],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' => 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' => 'Le site demandé est introuvable pour cette organisation.',
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Recherche de la journée
     |--------------------------------------------------------------------------
@@ -529,25 +529,25 @@ class ProductionController extends Controller
     |
     */
 
-    $day = DB::table('y_production_days')
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->where('production_date', $date)
-        ->first();
+        $day = DB::table('y_production_days')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('production_date', $date)
+            ->first();
 
-    if (!$day) {
-        return response()->json([
-            'exists' => false,
-            'org_id' => $orgId,
-            'site_id' => $siteId,
-            'date' => $date,
-            'status' => 'not_started',
-            'products_count' => 0,
-            'products' => [],
-        ]);
-    }
+        if (!$day) {
+            return response()->json([
+                'exists' => false,
+                'org_id' => $orgId,
+                'site_id' => $siteId,
+                'date' => $date,
+                'status' => 'not_started',
+                'products_count' => 0,
+                'products' => [],
+            ]);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Lecture des produits de CETTE journée
     |--------------------------------------------------------------------------
@@ -563,158 +563,160 @@ class ProductionController extends Controller
     |
     */
 
-    $products = DB::table('y_production_day_products as dp')
+        $products = DB::table('y_production_day_products as dp')
 
-        ->leftJoin(
-            'y_production_entries as e',
-            'e.production_day_product_id',
-            '=',
-            'dp.id'
-        )
+            ->leftJoin(
+                'y_production_entries as e',
+                'e.production_day_product_id',
+                '=',
+                'dp.id'
+            )
 
-        ->where('dp.org_id', $orgId)
-        ->where('dp.site_id', $siteId)
-        ->where('dp.production_day_id', $day->id)
+            ->where('dp.org_id', $orgId)
+            ->where('dp.site_id', $siteId)
+            ->where('dp.production_day_id', $day->id)
 
-        ->select([
-            /*
+            ->select([
+                /*
              * Identifiants
              */
-            'dp.id as production_day_product_id',
-            'dp.product_id',
-            'dp.category_id',
-            'dp.family_id',
+                'dp.id as production_day_product_id',
+                'dp.product_id',
+                'dp.category_id',
+                'dp.family_id',
 
-            /*
+                /*
              * Snapshot historique
              */
-            'dp.product_name_snapshot as name',
-            'dp.category_name_snapshot as category',
-            'dp.family_name_snapshot as family',
-            'dp.conservation_snapshot as conservation',
+                'dp.product_name_snapshot as name',
+                'dp.category_name_snapshot as category',
+                'dp.family_name_snapshot as family',
+                'dp.conservation_snapshot as conservation',
 
-            /*
+                /*
              * Présence dans la feuille
              */
-            'dp.is_included',
-            'dp.excluded_at',
-            'dp.excluded_by',
+                'dp.is_included',
+                'dp.excluded_at',
+                'dp.excluded_by',
 
-            /*
+                /*
              * Saisie
              */
-            'e.id as entry_id',
-            'e.stock_previous',
-            'e.production',
-            'e.reproduction',
-            'e.losses',
-            'e.sales',
-            'e.stock_end',
+                'e.id as entry_id',
+                'e.stock_previous',
+                'e.production',
+                'e.reproduction',
+                'e.losses',
+                'e.sales',
+                'e.stock_end',
 
-            /*
+                /*
              * Ordre historique
              */
-            'dp.family_order_snapshot',
-            'dp.category_order_snapshot',
-            'dp.product_order_snapshot',
-        ])
+                'dp.family_order_snapshot',
+                'dp.category_order_snapshot',
+                'dp.product_order_snapshot',
+            ])
 
-        ->orderBy('dp.family_order_snapshot')
-        ->orderBy('dp.family_name_snapshot')
+            ->orderBy('dp.family_order_snapshot')
+            ->orderBy('dp.family_name_snapshot')
 
-        ->orderBy('dp.category_order_snapshot')
-        ->orderBy('dp.category_name_snapshot')
+            ->orderBy('dp.category_order_snapshot')
+            ->orderBy('dp.category_name_snapshot')
 
-        ->orderBy('dp.product_order_snapshot')
-        ->orderBy('dp.product_name_snapshot')
+            ->orderBy('dp.product_order_snapshot')
+            ->orderBy('dp.product_name_snapshot')
 
-        ->get()
+            ->get()
 
-        /*
+            /*
          * On stabilise les types numériques retournés à React.
          */
-        ->map(function ($row) {
-            $row->production_day_product_id =
-                (int) $row->production_day_product_id;
+            ->map(function ($row) {
+                $row->production_day_product_id =
+                    (int) $row->production_day_product_id;
 
-            $row->product_id =
-                (int) $row->product_id;
+                $row->product_id =
+                    (int) $row->product_id;
 
-            $row->category_id =
-                (int) $row->category_id;
+                $row->category_id =
+                    (int) $row->category_id;
 
-            $row->family_id =
-                (int) $row->family_id;
+                $row->family_id =
+                    (int) $row->family_id;
 
-            $row->is_included =
-                (bool) $row->is_included;
+                $row->is_included =
+                    (bool) $row->is_included;
 
-            $row->entry_id =
-                $row->entry_id === null
+                $row->entry_id =
+                    $row->entry_id === null
                     ? null
                     : (int) $row->entry_id;
 
-            foreach ([
-                'stock_previous',
-                'production',
-                'reproduction',
-                'losses',
-                'sales',
-                'stock_end',
-            ] as $field) {
-                $row->{$field} =
-                    $row->{$field} === null
+                foreach (
+                    [
+                        'stock_previous',
+                        'production',
+                        'reproduction',
+                        'losses',
+                        'sales',
+                        'stock_end',
+                    ] as $field
+                ) {
+                    $row->{$field} =
+                        $row->{$field} === null
                         ? null
                         : (int) $row->{$field};
-            }
+                }
 
-            return $row;
-        });
+                return $row;
+            });
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'exists' => true,
+        return response()->json([
+            'exists' => true,
 
-        'day' => [
-            'id' => (int) $day->id,
-            'org_id' => (int) $day->org_id,
-            'site_id' => (int) $day->site_id,
+            'day' => [
+                'id' => (int) $day->id,
+                'org_id' => (int) $day->org_id,
+                'site_id' => (int) $day->site_id,
 
-            'production_date' => $day->production_date,
-            'status' => $day->status,
+                'production_date' => $day->production_date,
+                'status' => $day->status,
 
-            'started_at' => $day->started_at,
-            'started_by' => $day->started_by === null
-                ? null
-                : (int) $day->started_by,
+                'started_at' => $day->started_at,
+                'started_by' => $day->started_by === null
+                    ? null
+                    : (int) $day->started_by,
 
-            'finished_at' => $day->finished_at,
-            'finished_by' => $day->finished_by === null
-                ? null
-                : (int) $day->finished_by,
+                'finished_at' => $day->finished_at,
+                'finished_by' => $day->finished_by === null
+                    ? null
+                    : (int) $day->finished_by,
 
-            'closed_at' => $day->closed_at,
-            'closed_by' => $day->closed_by === null
-                ? null
-                : (int) $day->closed_by,
-        ],
+                'closed_at' => $day->closed_at,
+                'closed_by' => $day->closed_by === null
+                    ? null
+                    : (int) $day->closed_by,
+            ],
 
-        'products_count' => $products
-            ->where('is_included', true)
-            ->count(),
+            'products_count' => $products
+                ->where('is_included', true)
+                ->count(),
 
-        'products' => $products,
-    ]);
+            'products' => $products,
+        ]);
     }
 
     public function updateDay(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
@@ -728,110 +730,110 @@ class ProductionController extends Controller
     |
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
 
-        'entries' => [
-            'present',
-            'array',
-        ],
+            'entries' => [
+                'present',
+                'array',
+            ],
 
-        'entries.*.production_day_product_id' => [
-            'required',
-            'integer',
-            'min:1',
-            'distinct',
-        ],
+            'entries.*.production_day_product_id' => [
+                'required',
+                'integer',
+                'min:1',
+                'distinct',
+            ],
 
-        'entries.*.production' => [
-            'present',
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.production' => [
+                'present',
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.reproduction' => [
-            'present',
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.reproduction' => [
+                'present',
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.losses' => [
-            'present',
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.losses' => [
+                'present',
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.sales' => [
-            'present',
-            'nullable',
-            'integer',
-            'min:0',
-        ],
+            'entries.*.sales' => [
+                'present',
+                'nullable',
+                'integer',
+                'min:0',
+            ],
 
-        'entries.*.stock_end' => [
-            'present',
-            'nullable',
-            'integer',
-            'min:0',
-        ],
-    ]);
+            'entries.*.stock_end' => [
+                'present',
+                'nullable',
+                'integer',
+                'min:0',
+            ],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
+        $orgId = (int) config('tempo.default_org_id');
 
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
-    $entries = $validated['entries'];
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
+        $entries = $validated['entries'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 1. Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' => 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' => 'Le site demandé est introuvable pour cette organisation.',
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 2. Recherche de la journée
     |--------------------------------------------------------------------------
     */
 
-    $day = DB::table('y_production_days')
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->where('production_date', $date)
-        ->first();
+        $day = DB::table('y_production_days')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('production_date', $date)
+            ->first();
 
-    if (!$day) {
-        return response()->json([
-            'error' => 'production_day_not_found',
-            'message' => 'La feuille de production demandée n’existe pas.',
-        ], 404);
-    }
+        if (!$day) {
+            return response()->json([
+                'error' => 'production_day_not_found',
+                'message' => 'La feuille de production demandée n’existe pas.',
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 3. Vérification du statut
     |--------------------------------------------------------------------------
@@ -848,27 +850,27 @@ class ProductionController extends Controller
     |
     */
 
-    if ($day->status !== 'in_progress') {
-        return response()->json([
-            'error' => 'production_day_not_editable',
-            'message' => 'Cette feuille de production n’est plus modifiable.',
-            'status' => $day->status,
-        ], 409);
-    }
+        if ($day->status !== 'in_progress') {
+            return response()->json([
+                'error' => 'production_day_not_editable',
+                'message' => 'Cette feuille de production n’est plus modifiable.',
+                'status' => $day->status,
+            ], 409);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 4. IDs des produits de journée reçus
     |--------------------------------------------------------------------------
     */
 
-    $dayProductIds = collect($entries)
-        ->pluck('production_day_product_id')
-        ->map(fn ($id) => (int) $id)
-        ->values()
-        ->all();
+        $dayProductIds = collect($entries)
+            ->pluck('production_day_product_id')
+            ->map(fn($id) => (int) $id)
+            ->values()
+            ->all();
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 5. Vérification des produits de la journée
     |--------------------------------------------------------------------------
@@ -882,60 +884,60 @@ class ProductionController extends Controller
     |
     */
 
-    $dayProductsById = collect();
+        $dayProductsById = collect();
 
-    if (count($dayProductIds) > 0) {
-        $dayProductsById = DB::table(
-            'y_production_day_products as dp'
-        )
-
-            ->leftJoin(
-                'y_production_entries as e',
-                'e.production_day_product_id',
-                '=',
-                'dp.id'
+        if (count($dayProductIds) > 0) {
+            $dayProductsById = DB::table(
+                'y_production_day_products as dp'
             )
 
-            ->where('dp.org_id', $orgId)
-            ->where('dp.site_id', $siteId)
-            ->where('dp.production_day_id', $day->id)
+                ->leftJoin(
+                    'y_production_entries as e',
+                    'e.production_day_product_id',
+                    '=',
+                    'dp.id'
+                )
 
-            ->where('dp.is_included', 1)
+                ->where('dp.org_id', $orgId)
+                ->where('dp.site_id', $siteId)
+                ->where('dp.production_day_id', $day->id)
 
-            ->whereIn(
-                'dp.id',
-                $dayProductIds
-            )
+                ->where('dp.is_included', 1)
 
-            ->select([
-                'dp.id as production_day_product_id',
-                'dp.product_id',
-                'dp.conservation_snapshot',
+                ->whereIn(
+                    'dp.id',
+                    $dayProductIds
+                )
 
-                'e.id as entry_id',
-            ])
+                ->select([
+                    'dp.id as production_day_product_id',
+                    'dp.product_id',
+                    'dp.conservation_snapshot',
 
-            ->get()
+                    'e.id as entry_id',
+                ])
 
-            ->keyBy('production_day_product_id');
+                ->get()
 
-        /*
+                ->keyBy('production_day_product_id');
+
+            /*
          * Tous les IDs envoyés doivent avoir été retrouvés.
          */
 
-        if (
-            $dayProductsById->count()
-            !== count($dayProductIds)
-        ) {
-            return response()->json([
-                'error' => 'invalid_production_day_product',
-                'message' =>
+            if (
+                $dayProductsById->count()
+                !== count($dayProductIds)
+            ) {
+                return response()->json([
+                    'error' => 'invalid_production_day_product',
+                    'message' =>
                     'Un ou plusieurs produits ne sont pas valides pour cette feuille.',
-            ], 422);
+                ], 422);
+            }
         }
-    }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 6. Vérification de l'intégrité des entries
     |--------------------------------------------------------------------------
@@ -948,44 +950,44 @@ class ProductionController extends Controller
     |
     */
 
-    foreach ($dayProductsById as $dayProduct) {
-        if ($dayProduct->entry_id === null) {
-            return response()->json([
-                'error' => 'production_entry_missing',
-                'message' =>
+        foreach ($dayProductsById as $dayProduct) {
+            if ($dayProduct->entry_id === null) {
+                return response()->json([
+                    'error' => 'production_entry_missing',
+                    'message' =>
                     'Une ligne de production attendue est absente.',
-                'production_day_product_id' =>
+                    'production_day_product_id' =>
                     (int) $dayProduct->production_day_product_id,
-            ], 409);
+                ], 409);
+            }
         }
-    }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 7. Enregistrement transactionnel
     |--------------------------------------------------------------------------
     */
 
-    $savedEntries = 0;
-    $now = now('UTC');
+        $savedEntries = 0;
+        $now = now('UTC');
 
-    DB::transaction(function () use (
-        $entries,
-        $dayProductsById,
-        $orgId,
-        $now,
-        &$savedEntries
-    ) {
-        foreach ($entries as $entry) {
+        DB::transaction(function () use (
+            $entries,
+            $dayProductsById,
+            $orgId,
+            $now,
+            &$savedEntries
+        ) {
+            foreach ($entries as $entry) {
 
-            $productionDayProductId =
-                (int) $entry['production_day_product_id'];
+                $productionDayProductId =
+                    (int) $entry['production_day_product_id'];
 
-            $dayProduct = $dayProductsById->get(
-                $productionDayProductId
-            );
+                $dayProduct = $dayProductsById->get(
+                    $productionDayProductId
+                );
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Valeurs métier
             |--------------------------------------------------------------------------
@@ -997,24 +999,24 @@ class ProductionController extends Controller
             |
             */
 
-            $values = [
-                'production' =>
+                $values = [
+                    'production' =>
                     $entry['production'],
 
-                'reproduction' =>
+                    'reproduction' =>
                     $entry['reproduction'],
 
-                'losses' =>
+                    'losses' =>
                     $entry['losses'],
 
-                'sales' =>
+                    'sales' =>
                     $entry['sales'],
 
-                'stock_end' =>
+                    'stock_end' =>
                     $entry['stock_end'],
-            ];
+                ];
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Mise à jour
             |--------------------------------------------------------------------------
@@ -1023,327 +1025,327 @@ class ProductionController extends Controller
             |
             */
 
-            DB::table('y_production_entries')
-                ->where('id', $dayProduct->entry_id)
-                ->where('org_id', $orgId)
-                ->where(
-                    'production_day_product_id',
-                    $productionDayProductId
-                )
-                ->update([
-                    'production' =>
+                DB::table('y_production_entries')
+                    ->where('id', $dayProduct->entry_id)
+                    ->where('org_id', $orgId)
+                    ->where(
+                        'production_day_product_id',
+                        $productionDayProductId
+                    )
+                    ->update([
+                        'production' =>
                         $values['production'],
 
-                    'reproduction' =>
+                        'reproduction' =>
                         $values['reproduction'],
 
-                    'losses' =>
+                        'losses' =>
                         $values['losses'],
 
-                    'sales' =>
+                        'sales' =>
                         $values['sales'],
 
-                    'stock_end' =>
+                        'stock_end' =>
                         $values['stock_end'],
 
-                    'updated_by' => null,
-                    'updated_at' => $now,
-                ]);
+                        'updated_by' => null,
+                        'updated_at' => $now,
+                    ]);
 
-            $savedEntries++;
-        }
-    });
+                $savedEntries++;
+            }
+        });
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 8. Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
+        return response()->json([
+            'ok' => true,
 
-        'day' => [
-            'id' => (int) $day->id,
-            'date' => $day->production_date,
-            'status' => $day->status,
-        ],
+            'day' => [
+                'id' => (int) $day->id,
+                'date' => $day->production_date,
+                'status' => $day->status,
+            ],
 
-        'saved_entries' => $savedEntries,
-    ]);
+            'saved_entries' => $savedEntries,
+        ]);
     }
 
     public function openDay(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => ['required', 'integer', 'min:1'],
-        'date' => ['required', 'date_format:Y-m-d'],
-    ]);
+        $validated = $request->validate([
+            'site_id' => ['required', 'integer', 'min:1'],
+            'date' => ['required', 'date_format:Y-m-d'],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Transaction
     |--------------------------------------------------------------------------
     */
 
-    return DB::transaction(function () use (
-        $orgId,
-        $siteId,
-        $date
-    ) {
+        return DB::transaction(function () use (
+            $orgId,
+            $siteId,
+            $date
+        ) {
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 1. Journée déjà existante
         |--------------------------------------------------------------------------
         */
 
-        $existingDay = DB::table('y_production_days')
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->where('production_date', $date)
-            ->first();
+            $existingDay = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where('production_date', $date)
+                ->first();
 
-        if ($existingDay) {
-            $productsCount = DB::table('y_production_day_products')
-                ->where('production_day_id', $existingDay->id)
-                ->where('is_included', 1)
-                ->count();
+            if ($existingDay) {
+                $productsCount = DB::table('y_production_day_products')
+                    ->where('production_day_id', $existingDay->id)
+                    ->where('is_included', 1)
+                    ->count();
 
-            return response()->json([
-                'created' => false,
-                'day' => $existingDay,
-                'products_count' => $productsCount,
-            ]);
-        }
+                return response()->json([
+                    'created' => false,
+                    'day' => $existingDay,
+                    'products_count' => $productsCount,
+                ]);
+            }
 
-        $now = now('UTC');
+            $now = now('UTC');
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 2. Création de la journée
         |--------------------------------------------------------------------------
         */
 
-        $productionDayId = DB::table('y_production_days')
-            ->insertGetId([
-                'org_id' => $orgId,
-                'site_id' => $siteId,
+            $productionDayId = DB::table('y_production_days')
+                ->insertGetId([
+                    'org_id' => $orgId,
+                    'site_id' => $siteId,
 
-                'production_date' => $date,
+                    'production_date' => $date,
 
-                'status' => 'in_progress',
+                    'status' => 'in_progress',
 
-                'started_at' => $now,
-                'started_by' => null,
+                    'started_at' => $now,
+                    'started_by' => null,
 
-                'finished_at' => null,
-                'finished_by' => null,
+                    'finished_at' => null,
+                    'finished_by' => null,
 
-                'closed_at' => null,
-                'closed_by' => null,
+                    'closed_at' => null,
+                    'closed_by' => null,
 
-                'created_by' => null,
-                'created_at' => $now,
+                    'created_by' => null,
+                    'created_at' => $now,
 
-                'updated_by' => null,
-                'updated_at' => $now,
-            ]);
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 3. Historique du premier statut
         |--------------------------------------------------------------------------
         */
 
-        DB::table('y_production_day_status_history')
-            ->insert([
-                'org_id' => $orgId,
-                'site_id' => $siteId,
+            DB::table('y_production_day_status_history')
+                ->insert([
+                    'org_id' => $orgId,
+                    'site_id' => $siteId,
 
-                'production_day_id' => $productionDayId,
+                    'production_day_id' => $productionDayId,
 
-                'from_status' => null,
-                'to_status' => 'in_progress',
+                    'from_status' => null,
+                    'to_status' => 'in_progress',
 
-                'reason' => null,
+                    'reason' => null,
 
-                'created_by' => null,
-                'created_at' => $now,
-            ]);
+                    'created_by' => null,
+                    'created_at' => $now,
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 4. Produits actifs
         |--------------------------------------------------------------------------
         */
 
-        $products = DB::table('y_products as p')
+            $products = DB::table('y_products as p')
 
-            ->join(
-                'y_product_categories as c',
-                'c.id',
-                '=',
-                'p.category_id'
-            )
+                ->join(
+                    'y_product_categories as c',
+                    'c.id',
+                    '=',
+                    'p.category_id'
+                )
 
-            ->join(
-                'y_product_families as f',
-                'f.id',
-                '=',
-                'c.family_id'
-            )
+                ->join(
+                    'y_product_families as f',
+                    'f.id',
+                    '=',
+                    'c.family_id'
+                )
 
-            ->where('p.org_id', $orgId)
-            ->where('p.site_id', $siteId)
-            ->where('p.is_active', 1)
+                ->where('p.org_id', $orgId)
+                ->where('p.site_id', $siteId)
+                ->where('p.is_active', 1)
 
-            ->where('c.org_id', $orgId)
-            ->where('c.site_id', $siteId)
-            ->where('c.is_active', 1)
+                ->where('c.org_id', $orgId)
+                ->where('c.site_id', $siteId)
+                ->where('c.is_active', 1)
 
-            ->where('f.org_id', $orgId)
-            ->where('f.site_id', $siteId)
-            ->where('f.is_active', 1)
+                ->where('f.org_id', $orgId)
+                ->where('f.site_id', $siteId)
+                ->where('f.is_active', 1)
 
-            ->select([
-                'p.id as product_id',
-                'p.name as product_name',
-                'p.conservation',
-                'p.display_order as product_order',
+                ->select([
+                    'p.id as product_id',
+                    'p.name as product_name',
+                    'p.conservation',
+                    'p.display_order as product_order',
 
-                'c.id as category_id',
-                'c.name as category_name',
-                'c.display_order as category_order',
+                    'c.id as category_id',
+                    'c.name as category_name',
+                    'c.display_order as category_order',
 
-                'f.id as family_id',
-                'f.name as family_name',
-                'f.display_order as family_order',
-            ])
+                    'f.id as family_id',
+                    'f.name as family_name',
+                    'f.display_order as family_order',
+                ])
 
-            ->orderBy('f.display_order')
-            ->orderBy('c.display_order')
-            ->orderBy('p.display_order')
-            ->orderBy('p.name')
+                ->orderBy('f.display_order')
+                ->orderBy('c.display_order')
+                ->orderBy('p.display_order')
+                ->orderBy('p.name')
 
-            ->get();
+                ->get();
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | Aucun produit
         |--------------------------------------------------------------------------
         */
 
-        if ($products->isEmpty()) {
-            $day = DB::table('y_production_days')
-                ->where('id', $productionDayId)
-                ->first();
+            if ($products->isEmpty()) {
+                $day = DB::table('y_production_days')
+                    ->where('id', $productionDayId)
+                    ->first();
 
-            return response()->json([
-                'created' => true,
-                'day' => $day,
-                'products_count' => 0,
-            ], 201);
-        }
+                return response()->json([
+                    'created' => true,
+                    'day' => $day,
+                    'products_count' => 0,
+                ], 201);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 5. Veille calendaire
         |--------------------------------------------------------------------------
         */
 
-        $previousDate =
-            \Illuminate\Support\Carbon::createFromFormat(
-                'Y-m-d',
-                $date
-            )
+            $previousDate =
+                \Illuminate\Support\Carbon::createFromFormat(
+                    'Y-m-d',
+                    $date
+                )
                 ->subDay()
                 ->toDateString();
 
-        $productIds = $products
-            ->pluck('product_id')
-            ->map(fn ($id) => (int) $id)
-            ->values()
-            ->all();
+            $productIds = $products
+                ->pluck('product_id')
+                ->map(fn($id) => (int) $id)
+                ->values()
+                ->all();
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 6. Stocks de J-1
         |--------------------------------------------------------------------------
         */
 
-        $previousEntries = DB::table('y_production_entries as e')
+            $previousEntries = DB::table('y_production_entries as e')
 
-            ->leftJoin(
-                'y_production_day_products as dp',
-                'dp.id',
-                '=',
-                'e.production_day_product_id'
-            )
+                ->leftJoin(
+                    'y_production_day_products as dp',
+                    'dp.id',
+                    '=',
+                    'e.production_day_product_id'
+                )
 
-            ->leftJoin(
-                'y_production_days as d',
-                'd.id',
-                '=',
-                'dp.production_day_id'
-            )
+                ->leftJoin(
+                    'y_production_days as d',
+                    'd.id',
+                    '=',
+                    'dp.production_day_id'
+                )
 
-            ->where('e.org_id', $orgId)
-            ->where('e.site_id', $siteId)
+                ->where('e.org_id', $orgId)
+                ->where('e.site_id', $siteId)
 
-            ->whereIn(
-                'e.product_id',
-                $productIds
-            )
+                ->whereIn(
+                    'e.product_id',
+                    $productIds
+                )
 
-            ->where(
-                'e.production_date',
-                $previousDate
-            )
+                ->where(
+                    'e.production_date',
+                    $previousDate
+                )
 
-            ->select([
-                'e.product_id',
-                'e.stock_end',
-                'e.production_day_product_id',
+                ->select([
+                    'e.product_id',
+                    'e.stock_end',
+                    'e.production_day_product_id',
 
-                'dp.is_included as was_included',
-                'd.status as day_status',
-            ])
+                    'dp.is_included as was_included',
+                    'd.status as day_status',
+                ])
 
-            ->get()
+                ->get()
 
-            ->keyBy('product_id');
+                ->keyBy('product_id');
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 7. Préparation des snapshots
         |--------------------------------------------------------------------------
@@ -1355,130 +1357,130 @@ class ProductionController extends Controller
         |
         */
 
-        $snapshotRows = [];
+            $snapshotRows = [];
 
-        /*
+            /*
          * On conserve également le Stock J-1 calculé
          * pour construire ensuite les entries.
          */
-        $stockPreviousByProductId = [];
+            $stockPreviousByProductId = [];
 
-        foreach ($products as $product) {
+            foreach ($products as $product) {
 
-            $productId = (int) $product->product_id;
+                $productId = (int) $product->product_id;
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Stock J-1
             |--------------------------------------------------------------------------
             */
 
-            $stockPrevious = null;
+                $stockPrevious = null;
 
-            if ($product->conservation !== 'J') {
+                if ($product->conservation !== 'J') {
 
-                $previousEntry =
-                    $previousEntries->get($productId);
+                    $previousEntry =
+                        $previousEntries->get($productId);
 
-                if ($previousEntry) {
+                    if ($previousEntry) {
 
-                    $isLegacyEntry =
-                        $previousEntry
+                        $isLegacyEntry =
+                            $previousEntry
                             ->production_day_product_id
-                        === null;
+                            === null;
 
-                    $isValidNewEntry =
-                        (int) $previousEntry->was_included === 1
-                        && in_array(
-                            $previousEntry->day_status,
-                            [
-                                'finished',
-                                'closed',
-                            ],
-                            true
-                        );
+                        $isValidNewEntry =
+                            (int) $previousEntry->was_included === 1
+                            && in_array(
+                                $previousEntry->day_status,
+                                [
+                                    'finished',
+                                    'closed',
+                                ],
+                                true
+                            );
 
-                    if (
-                        $isLegacyEntry
-                        || $isValidNewEntry
-                    ) {
-                        $stockPrevious =
-                            $previousEntry->stock_end === null
+                        if (
+                            $isLegacyEntry
+                            || $isValidNewEntry
+                        ) {
+                            $stockPrevious =
+                                $previousEntry->stock_end === null
                                 ? null
                                 : (int) $previousEntry->stock_end;
+                        }
                     }
                 }
-            }
 
-            $stockPreviousByProductId[$productId] =
-                $stockPrevious;
+                $stockPreviousByProductId[$productId] =
+                    $stockPrevious;
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Snapshot
             |--------------------------------------------------------------------------
             */
 
-            $snapshotRows[] = [
-                'org_id' => $orgId,
-                'site_id' => $siteId,
+                $snapshotRows[] = [
+                    'org_id' => $orgId,
+                    'site_id' => $siteId,
 
-                'production_day_id' =>
+                    'production_day_id' =>
                     $productionDayId,
 
-                'product_id' =>
+                    'product_id' =>
                     $productId,
 
-                'category_id' =>
+                    'category_id' =>
                     (int) $product->category_id,
 
-                'family_id' =>
+                    'family_id' =>
                     (int) $product->family_id,
 
-                'product_name_snapshot' =>
+                    'product_name_snapshot' =>
                     $product->product_name,
 
-                'category_name_snapshot' =>
+                    'category_name_snapshot' =>
                     $product->category_name,
 
-                'family_name_snapshot' =>
+                    'family_name_snapshot' =>
                     $product->family_name,
 
-                'conservation_snapshot' =>
+                    'conservation_snapshot' =>
                     $product->conservation,
 
-                'product_order_snapshot' =>
+                    'product_order_snapshot' =>
                     $product->product_order,
 
-                'category_order_snapshot' =>
+                    'category_order_snapshot' =>
                     $product->category_order,
 
-                'family_order_snapshot' =>
+                    'family_order_snapshot' =>
                     $product->family_order,
 
-                'is_included' => 1,
+                    'is_included' => 1,
 
-                'excluded_at' => null,
-                'excluded_by' => null,
+                    'excluded_at' => null,
+                    'excluded_by' => null,
 
-                'created_by' => null,
-                'created_at' => $now,
+                    'created_by' => null,
+                    'created_at' => $now,
 
-                'updated_by' => null,
-                'updated_at' => $now,
-            ];
-        }
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ];
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 8. Création de TOUS les snapshots en une requête
         |--------------------------------------------------------------------------
         */
 
-        DB::table('y_production_day_products')
-            ->insert($snapshotRows);
+            DB::table('y_production_day_products')
+                ->insert($snapshotRows);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 9. Récupération des IDs générés
         |--------------------------------------------------------------------------
@@ -1488,8 +1490,8 @@ class ProductionController extends Controller
         |
         */
 
-        $dayProductsByProductId =
-            DB::table('y_production_day_products')
+            $dayProductsByProductId =
+                DB::table('y_production_day_products')
 
                 ->where(
                     'production_day_id',
@@ -1513,96 +1515,96 @@ class ProductionController extends Controller
 
                 ->keyBy('product_id');
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 10. Préparation des lignes de saisie
         |--------------------------------------------------------------------------
         */
 
-        $entryRows = [];
+            $entryRows = [];
 
-        foreach ($products as $product) {
+            foreach ($products as $product) {
 
-            $productId =
-                (int) $product->product_id;
+                $productId =
+                    (int) $product->product_id;
 
-            $dayProduct =
-                $dayProductsByProductId->get(
-                    $productId
-                );
+                $dayProduct =
+                    $dayProductsByProductId->get(
+                        $productId
+                    );
 
-            /*
+                /*
              * Sécurité technique :
              * chaque snapshot doit avoir été retrouvé.
              */
-            if (!$dayProduct) {
-                throw new \RuntimeException(
-                    'Snapshot de produit introuvable après création.'
-                );
-            }
+                if (!$dayProduct) {
+                    throw new \RuntimeException(
+                        'Snapshot de produit introuvable après création.'
+                    );
+                }
 
-            $entryRows[] = [
-                'org_id' => $orgId,
-                'site_id' => $siteId,
+                $entryRows[] = [
+                    'org_id' => $orgId,
+                    'site_id' => $siteId,
 
-                'product_id' =>
+                    'product_id' =>
                     $productId,
 
-                'production_day_product_id' =>
+                    'production_day_product_id' =>
                     (int) $dayProduct->id,
 
-                'production_date' =>
+                    'production_date' =>
                     $date,
 
-                'stock_previous' =>
+                    'stock_previous' =>
                     $stockPreviousByProductId[$productId]
-                    ?? null,
+                        ?? null,
 
-                'production' => null,
-                'reproduction' => null,
-                'losses' => null,
-                'sales' => null,
-                'stock_end' => null,
+                    'production' => null,
+                    'reproduction' => null,
+                    'losses' => null,
+                    'sales' => null,
+                    'stock_end' => null,
 
-                'created_by' => null,
-                'created_at' => $now,
+                    'created_by' => null,
+                    'created_at' => $now,
 
-                'updated_by' => null,
-                'updated_at' => $now,
-            ];
-        }
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ];
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 11. Création de TOUTES les entries en une requête
         |--------------------------------------------------------------------------
         */
 
-        DB::table('y_production_entries')
-            ->insert($entryRows);
+            DB::table('y_production_entries')
+                ->insert($entryRows);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 12. Réponse
         |--------------------------------------------------------------------------
         */
 
-        $day = DB::table('y_production_days')
-            ->where('id', $productionDayId)
-            ->first();
+            $day = DB::table('y_production_days')
+                ->where('id', $productionDayId)
+                ->first();
 
-        return response()->json([
-            'created' => true,
-            'day' => $day,
-            'products_count' =>
+            return response()->json([
+                'created' => true,
+                'day' => $day,
+                'products_count' =>
                 $products->count(),
-        ], 201);
-    });
+            ], 201);
+        });
     }
 
     public function finishDay(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
@@ -1616,239 +1618,239 @@ class ProductionController extends Controller
     |
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
 
-        'confirm_zero_fill' => [
-            'sometimes',
-            'boolean',
-        ],
-    ]);
+            'confirm_zero_fill' => [
+                'sometimes',
+                'boolean',
+            ],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
 
-    $confirmZeroFill =
-        (bool) ($validated['confirm_zero_fill'] ?? false);
+        $confirmZeroFill =
+            (bool) ($validated['confirm_zero_fill'] ?? false);
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Transaction
     |--------------------------------------------------------------------------
     */
 
-    return DB::transaction(function () use (
-        $orgId,
-        $siteId,
-        $date,
-        $confirmZeroFill
-    ) {
+        return DB::transaction(function () use (
+            $orgId,
+            $siteId,
+            $date,
+            $confirmZeroFill
+        ) {
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 1. Recherche et verrouillage de la journée
         |--------------------------------------------------------------------------
         */
 
-        $day = DB::table('y_production_days')
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->where('production_date', $date)
-            ->lockForUpdate()
-            ->first();
+            $day = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where('production_date', $date)
+                ->lockForUpdate()
+                ->first();
 
-        if (!$day) {
-            return response()->json([
-                'error' => 'production_day_not_found',
-                'message' =>
+            if (!$day) {
+                return response()->json([
+                    'error' => 'production_day_not_found',
+                    'message' =>
                     'La feuille de production demandée n’existe pas.',
-            ], 404);
-        }
+                ], 404);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 2. Idempotence
         |--------------------------------------------------------------------------
         */
 
-        if ($day->status === 'finished') {
-            return response()->json([
-                'ok' => true,
-                'already_finished' => true,
+            if ($day->status === 'finished') {
+                return response()->json([
+                    'ok' => true,
+                    'already_finished' => true,
 
-                'day' => [
-                    'id' => (int) $day->id,
-                    'date' => $day->production_date,
-                    'status' => $day->status,
-                ],
-            ]);
-        }
+                    'day' => [
+                        'id' => (int) $day->id,
+                        'date' => $day->production_date,
+                        'status' => $day->status,
+                    ],
+                ]);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 3. Une journée clôturée ne peut pas être terminée
         |--------------------------------------------------------------------------
         */
 
-        if ($day->status === 'closed') {
-            return response()->json([
-                'error' => 'production_day_closed',
-                'message' =>
+            if ($day->status === 'closed') {
+                return response()->json([
+                    'error' => 'production_day_closed',
+                    'message' =>
                     'Cette feuille est clôturée et doit être réouverte par un manager avant modification.',
-            ], 409);
-        }
+                ], 409);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 4. Seule une journée en cours peut être terminée
         |--------------------------------------------------------------------------
         */
 
-        if ($day->status !== 'in_progress') {
-            return response()->json([
-                'error' => 'invalid_production_day_status',
-                'message' =>
+            if ($day->status !== 'in_progress') {
+                return response()->json([
+                    'error' => 'invalid_production_day_status',
+                    'message' =>
                     'Cette feuille ne peut pas être terminée dans son état actuel.',
-                'status' => $day->status,
-            ], 409);
-        }
+                    'status' => $day->status,
+                ], 409);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 5. Lecture des produits inclus + entries
         |--------------------------------------------------------------------------
         */
 
-        $rows = DB::table('y_production_day_products as dp')
+            $rows = DB::table('y_production_day_products as dp')
 
-            ->leftJoin(
-                'y_production_entries as e',
-                'e.production_day_product_id',
-                '=',
-                'dp.id'
-            )
+                ->leftJoin(
+                    'y_production_entries as e',
+                    'e.production_day_product_id',
+                    '=',
+                    'dp.id'
+                )
 
-            ->where('dp.org_id', $orgId)
-            ->where('dp.site_id', $siteId)
-            ->where('dp.production_day_id', $day->id)
-            ->where('dp.is_included', 1)
+                ->where('dp.org_id', $orgId)
+                ->where('dp.site_id', $siteId)
+                ->where('dp.production_day_id', $day->id)
+                ->where('dp.is_included', 1)
 
-            ->select([
-                'dp.id as production_day_product_id',
-                'dp.product_name_snapshot as product_name',
-                'dp.conservation_snapshot as conservation',
+                ->select([
+                    'dp.id as production_day_product_id',
+                    'dp.product_name_snapshot as product_name',
+                    'dp.conservation_snapshot as conservation',
 
-                'e.id as entry_id',
+                    'e.id as entry_id',
 
-                'e.production',
-                'e.reproduction',
-                'e.losses',
-                'e.sales',
-                'e.stock_end',
-            ])
+                    'e.production',
+                    'e.reproduction',
+                    'e.losses',
+                    'e.sales',
+                    'e.stock_end',
+                ])
 
-            ->get();
+                ->get();
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 6. Vérification technique : toutes les entries doivent exister
         |--------------------------------------------------------------------------
         */
 
-        foreach ($rows as $row) {
-            if ($row->entry_id === null) {
-                return response()->json([
-                    'error' => 'production_entry_missing',
-                    'message' =>
+            foreach ($rows as $row) {
+                if ($row->entry_id === null) {
+                    return response()->json([
+                        'error' => 'production_entry_missing',
+                        'message' =>
                         'Une ligne de production attendue est absente.',
 
-                    'production_day_product_id' =>
+                        'production_day_product_id' =>
                         (int) $row->production_day_product_id,
 
-                    'product_name' =>
+                        'product_name' =>
                         $row->product_name,
-                ], 409);
+                    ], 409);
+                }
             }
-        }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 7. Détection des valeurs manquantes
         |--------------------------------------------------------------------------
         */
 
-        $editableFields = [
-            'production',
-            'reproduction',
-            'losses',
-            'sales',
-            'stock_end',
-        ];
+            $editableFields = [
+                'production',
+                'reproduction',
+                'losses',
+                'sales',
+                'stock_end',
+            ];
 
-        $missingValuesCount = 0;
+            $missingValuesCount = 0;
 
-        $missingProducts = [];
+            $missingProducts = [];
 
-        $warnings = [];
+            $warnings = [];
 
-        foreach ($rows as $row) {
+            foreach ($rows as $row) {
 
-            $productMissingFields = [];
+                $productMissingFields = [];
 
-            foreach ($editableFields as $field) {
-                if ($row->{$field} === null) {
-                    $missingValuesCount++;
-                    $productMissingFields[] = $field;
+                foreach ($editableFields as $field) {
+                    if ($row->{$field} === null) {
+                        $missingValuesCount++;
+                        $productMissingFields[] = $field;
+                    }
                 }
-            }
 
-            /*
+                /*
              * On conserve le détail des champs manquants
              * pour chaque produit.
              */
-            if (count($productMissingFields) > 0) {
-                $missingProducts[] = [
-                    'production_day_product_id' =>
+                if (count($productMissingFields) > 0) {
+                    $missingProducts[] = [
+                        'production_day_product_id' =>
                         (int) $row->production_day_product_id,
 
-                    'product_name' =>
+                        'product_name' =>
                         $row->product_name,
 
-                    'fields' =>
+                        'fields' =>
                         $productMissingFields,
-                ];
-            }
+                    ];
+                }
 
-            /*
+                /*
             |--------------------------------------------------------------------------
             | Warning Stock fin
             |--------------------------------------------------------------------------
@@ -1859,32 +1861,32 @@ class ProductionController extends Controller
             |
             */
 
-            $hasProductionActivity =
-                ((int) ($row->production ?? 0) > 0)
-                ||
-                ((int) ($row->reproduction ?? 0) > 0);
+                $hasProductionActivity =
+                    ((int) ($row->production ?? 0) > 0)
+                    ||
+                    ((int) ($row->reproduction ?? 0) > 0);
 
-            if (
-                $hasProductionActivity
-                && $row->stock_end === null
-            ) {
-                $warnings[] = [
-                    'code' =>
+                if (
+                    $hasProductionActivity
+                    && $row->stock_end === null
+                ) {
+                    $warnings[] = [
+                        'code' =>
                         'stock_end_missing_after_activity',
 
-                    'production_day_product_id' =>
+                        'production_day_product_id' =>
                         (int) $row->production_day_product_id,
 
-                    'product_name' =>
+                        'product_name' =>
                         $row->product_name,
 
-                    'message' =>
+                        'message' =>
                         'Le stock de fin doit être vérifié pour ce produit.',
-                ];
+                    ];
+                }
             }
-        }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 8. Confirmation nécessaire
         |--------------------------------------------------------------------------
@@ -1894,55 +1896,55 @@ class ProductionController extends Controller
         |
         */
 
-        if (
-            $missingValuesCount > 0
-            && !$confirmZeroFill
-        ) {
-            return response()->json([
-                'ok' => false,
+            if (
+                $missingValuesCount > 0
+                && !$confirmZeroFill
+            ) {
+                return response()->json([
+                    'ok' => false,
 
-                'requires_confirmation' => true,
+                    'requires_confirmation' => true,
 
-                'message' =>
+                    'message' =>
                     $missingValuesCount
-                    . ' valeur(s) ne sont pas renseignée(s).',
+                        . ' valeur(s) ne sont pas renseignée(s).',
 
-                'missing_values_count' =>
+                    'missing_values_count' =>
                     $missingValuesCount,
 
-                'missing_products' =>
+                    'missing_products' =>
                     $missingProducts,
 
-                'warnings' =>
+                    'warnings' =>
                     $warnings,
-            ]);
-        }
+                ]);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 9. Si confirmation : NULL applicables → 0
         |--------------------------------------------------------------------------
         */
 
-        $now = now('UTC');
+            $now = now('UTC');
 
-        $zeroFilledValuesCount = 0;
+            $zeroFilledValuesCount = 0;
 
-        if (
-            $missingValuesCount > 0
-            && $confirmZeroFill
-        ) {
+            if (
+                $missingValuesCount > 0
+                && $confirmZeroFill
+            ) {
 
-            /*
+                /*
              * On récupère toutes les entries de cette feuille.
              */
-            $entryIds = $rows
-                ->pluck('entry_id')
-                ->map(fn ($id) => (int) $id)
-                ->values()
-                ->all();
+                $entryIds = $rows
+                    ->pluck('entry_id')
+                    ->map(fn($id) => (int) $id)
+                    ->values()
+                    ->all();
 
-            /*
+                /*
              * Une seule requête SQL.
              *
              * COALESCE :
@@ -1950,197 +1952,197 @@ class ProductionController extends Controller
              * NULL → 0
              * valeur existante → conservée
              */
-            DB::table('y_production_entries')
-                ->where('org_id', $orgId)
-                ->whereIn('id', $entryIds)
-                ->update([
-                    'production' =>
+                DB::table('y_production_entries')
+                    ->where('org_id', $orgId)
+                    ->whereIn('id', $entryIds)
+                    ->update([
+                        'production' =>
                         DB::raw('COALESCE(production, 0)'),
 
-                    'reproduction' =>
+                        'reproduction' =>
                         DB::raw('COALESCE(reproduction, 0)'),
 
-                    'losses' =>
+                        'losses' =>
                         DB::raw('COALESCE(losses, 0)'),
 
-                    'sales' =>
+                        'sales' =>
                         DB::raw('COALESCE(sales, 0)'),
 
-                    'stock_end' =>
+                        'stock_end' =>
                         DB::raw('COALESCE(stock_end, 0)'),
+
+                        'updated_by' => null,
+                        'updated_at' => $now,
+                    ]);
+
+                /*
+             * Le nombre avait déjà été calculé
+             * pendant le contrôle.
+             */
+                $zeroFilledValuesCount =
+                    $missingValuesCount;
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | 10. Passage à finished
+        |--------------------------------------------------------------------------
+        */
+
+            DB::table('y_production_days')
+                ->where('id', $day->id)
+                ->where('org_id', $orgId)
+                ->update([
+                    'status' => 'finished',
+
+                    'finished_at' => $now,
+
+                    /*
+                 * Pas encore d'authentification utilisateur.
+                 */
+                    'finished_by' => null,
 
                     'updated_by' => null,
                     'updated_at' => $now,
                 ]);
 
             /*
-             * Le nombre avait déjà été calculé
-             * pendant le contrôle.
-             */
-            $zeroFilledValuesCount =
-                $missingValuesCount;
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | 10. Passage à finished
-        |--------------------------------------------------------------------------
-        */
-
-        DB::table('y_production_days')
-            ->where('id', $day->id)
-            ->where('org_id', $orgId)
-            ->update([
-                'status' => 'finished',
-
-                'finished_at' => $now,
-
-                /*
-                 * Pas encore d'authentification utilisateur.
-                 */
-                'finished_by' => null,
-
-                'updated_by' => null,
-                'updated_at' => $now,
-            ]);
-
-        /*
         |--------------------------------------------------------------------------
         | 11. Historique du changement de statut
         |--------------------------------------------------------------------------
         */
 
-        DB::table('y_production_day_status_history')
-            ->insert([
-                'org_id' => $orgId,
-                'site_id' => $siteId,
+            DB::table('y_production_day_status_history')
+                ->insert([
+                    'org_id' => $orgId,
+                    'site_id' => $siteId,
 
-                'production_day_id' =>
+                    'production_day_id' =>
                     $day->id,
 
-                'from_status' =>
+                    'from_status' =>
                     'in_progress',
 
-                'to_status' =>
+                    'to_status' =>
                     'finished',
 
-                'reason' =>
+                    'reason' =>
                     null,
 
-                /*
+                    /*
                  * Pas encore d'authentification utilisateur.
                  */
-                'created_by' =>
+                    'created_by' =>
                     null,
 
-                'created_at' =>
+                    'created_at' =>
                     $now,
-            ]);
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 12. Réponse
         |--------------------------------------------------------------------------
         */
 
-        return response()->json([
-            'ok' => true,
+            return response()->json([
+                'ok' => true,
 
-            'requires_confirmation' => false,
+                'requires_confirmation' => false,
 
-            'day' => [
-                'id' => (int) $day->id,
-                'date' => $day->production_date,
-                'status' => 'finished',
-            ],
+                'day' => [
+                    'id' => (int) $day->id,
+                    'date' => $day->production_date,
+                    'status' => 'finished',
+                ],
 
-            'zero_filled_values_count' =>
+                'zero_filled_values_count' =>
                 $zeroFilledValuesCount,
 
-            'warnings' =>
+                'warnings' =>
                 $warnings,
-        ]);
-    });
+            ]);
+        });
     }
 
     public function closeDay(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
-    ]);
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Transaction
     |--------------------------------------------------------------------------
     */
 
-    return DB::transaction(function () use (
-        $orgId,
-        $siteId,
-        $date
-    ) {
+        return DB::transaction(function () use (
+            $orgId,
+            $siteId,
+            $date
+        ) {
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 1. Recherche et verrouillage de la journée
         |--------------------------------------------------------------------------
         */
 
-        $day = DB::table('y_production_days')
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->where('production_date', $date)
-            ->lockForUpdate()
-            ->first();
+            $day = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where('production_date', $date)
+                ->lockForUpdate()
+                ->first();
 
-        if (!$day) {
-            return response()->json([
-                'error' => 'production_day_not_found',
-                'message' =>
+            if (!$day) {
+                return response()->json([
+                    'error' => 'production_day_not_found',
+                    'message' =>
                     'La feuille de production demandée n’existe pas.',
-            ], 404);
-        }
+                ], 404);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 2. Idempotence
         |--------------------------------------------------------------------------
@@ -2150,21 +2152,21 @@ class ProductionController extends Controller
         |
         */
 
-        if ($day->status === 'closed') {
-            return response()->json([
-                'ok' => true,
-                'already_closed' => true,
+            if ($day->status === 'closed') {
+                return response()->json([
+                    'ok' => true,
+                    'already_closed' => true,
 
-                'day' => [
-                    'id' => (int) $day->id,
-                    'date' => $day->production_date,
-                    'status' => $day->status,
-                    'closed_at' => $day->closed_at,
-                ],
-            ]);
-        }
+                    'day' => [
+                        'id' => (int) $day->id,
+                        'date' => $day->production_date,
+                        'status' => $day->status,
+                        'closed_at' => $day->closed_at,
+                    ],
+                ]);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 3. Seule une journée finished peut être clôturée
         |--------------------------------------------------------------------------
@@ -2174,99 +2176,99 @@ class ProductionController extends Controller
         |
         */
 
-        if ($day->status !== 'finished') {
-            return response()->json([
-                'error' => 'production_day_not_ready_to_close',
+            if ($day->status !== 'finished') {
+                return response()->json([
+                    'error' => 'production_day_not_ready_to_close',
 
-                'message' =>
+                    'message' =>
                     'La feuille doit être terminée avant de pouvoir être clôturée.',
 
-                'status' => $day->status,
-            ], 409);
-        }
+                    'status' => $day->status,
+                ], 409);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 4. Clôture
         |--------------------------------------------------------------------------
         */
 
-        $now = now('UTC');
+            $now = now('UTC');
 
-        DB::table('y_production_days')
-            ->where('id', $day->id)
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->update([
-                'status' => 'closed',
+            DB::table('y_production_days')
+                ->where('id', $day->id)
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->update([
+                    'status' => 'closed',
 
-                'closed_at' => $now,
+                    'closed_at' => $now,
 
-                /*
+                    /*
                  * L'utilisateur sera renseigné lorsque
                  * l'authentification / RBAC sera branchée.
                  */
-                'closed_by' => null,
+                    'closed_by' => null,
 
-                'updated_by' => null,
-                'updated_at' => $now,
-            ]);
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 5. Historique
         |--------------------------------------------------------------------------
         */
 
-        DB::table('y_production_day_status_history')
-            ->insert([
-                'org_id' => $orgId,
-                'site_id' => $siteId,
+            DB::table('y_production_day_status_history')
+                ->insert([
+                    'org_id' => $orgId,
+                    'site_id' => $siteId,
 
-                'production_day_id' =>
+                    'production_day_id' =>
                     $day->id,
 
-                'from_status' =>
+                    'from_status' =>
                     'finished',
 
-                'to_status' =>
+                    'to_status' =>
                     'closed',
 
-                'reason' =>
+                    'reason' =>
                     null,
 
-                /*
+                    /*
                  * Pas encore d'authentification.
                  */
-                'created_by' =>
+                    'created_by' =>
                     null,
 
-                'created_at' =>
+                    'created_at' =>
                     $now,
-            ]);
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 6. Réponse
         |--------------------------------------------------------------------------
         */
 
-        return response()->json([
-            'ok' => true,
+            return response()->json([
+                'ok' => true,
 
-            'day' => [
-                'id' => (int) $day->id,
-                'date' => $day->production_date,
-                'status' => 'closed',
-                'closed_at' => $now->toDateTimeString(),
-            ],
-        ]);
-    });
+                'day' => [
+                    'id' => (int) $day->id,
+                    'date' => $day->production_date,
+                    'status' => 'closed',
+                    'closed_at' => $now->toDateTimeString(),
+                ],
+            ]);
+        });
     }
 
     public function reopenDay(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
@@ -2276,101 +2278,101 @@ class ProductionController extends Controller
     |
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
 
-        'reason' => [
-            'nullable',
-            'string',
-            'max:500',
-        ],
-    ]);
+            'reason' => [
+                'nullable',
+                'string',
+                'max:500',
+            ],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
-    $reason = $validated['reason'] ?? null;
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
+        $reason = $validated['reason'] ?? null;
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Transaction
     |--------------------------------------------------------------------------
     */
 
-    return DB::transaction(function () use (
-        $orgId,
-        $siteId,
-        $date,
-        $reason
-    ) {
+        return DB::transaction(function () use (
+            $orgId,
+            $siteId,
+            $date,
+            $reason
+        ) {
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 1. Recherche et verrouillage de la journée
         |--------------------------------------------------------------------------
         */
 
-        $day = DB::table('y_production_days')
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->where('production_date', $date)
-            ->lockForUpdate()
-            ->first();
+            $day = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where('production_date', $date)
+                ->lockForUpdate()
+                ->first();
 
-        if (!$day) {
-            return response()->json([
-                'error' => 'production_day_not_found',
-                'message' =>
+            if (!$day) {
+                return response()->json([
+                    'error' => 'production_day_not_found',
+                    'message' =>
                     'La feuille de production demandée n’existe pas.',
-            ], 404);
-        }
+                ], 404);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 2. Seule une journée closed peut être réouverte
         |--------------------------------------------------------------------------
         */
 
-        if ($day->status !== 'closed') {
-            return response()->json([
-                'error' => 'production_day_not_closed',
+            if ($day->status !== 'closed') {
+                return response()->json([
+                    'error' => 'production_day_not_closed',
 
-                'message' =>
+                    'message' =>
                     'Seule une feuille clôturée peut être réouverte.',
 
-                'status' => $day->status,
-            ], 409);
-        }
+                    'status' => $day->status,
+                ], 409);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 3. Réouverture
         |--------------------------------------------------------------------------
@@ -2388,529 +2390,193 @@ class ProductionController extends Controller
         |
         */
 
-        $now = now('UTC');
+            $now = now('UTC');
 
-        DB::table('y_production_days')
-            ->where('id', $day->id)
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->update([
-                'status' => 'in_progress',
+            DB::table('y_production_days')
+                ->where('id', $day->id)
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->update([
+                    'status' => 'in_progress',
 
-                'finished_at' => null,
-                'finished_by' => null,
+                    'finished_at' => null,
+                    'finished_by' => null,
 
-                'closed_at' => null,
-                'closed_by' => null,
+                    'closed_at' => null,
+                    'closed_by' => null,
 
-                /*
+                    /*
                  * Pas encore d'authentification.
                  */
-                'updated_by' => null,
-                'updated_at' => $now,
-            ]);
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 4. Historique
         |--------------------------------------------------------------------------
         */
 
-        DB::table('y_production_day_status_history')
-            ->insert([
-                'org_id' => $orgId,
-                'site_id' => $siteId,
+            DB::table('y_production_day_status_history')
+                ->insert([
+                    'org_id' => $orgId,
+                    'site_id' => $siteId,
 
-                'production_day_id' =>
+                    'production_day_id' =>
                     $day->id,
 
-                'from_status' =>
+                    'from_status' =>
                     'closed',
 
-                'to_status' =>
+                    'to_status' =>
                     'in_progress',
 
-                'reason' =>
+                    'reason' =>
                     $reason,
 
-                /*
+                    /*
                  * Plus tard :
                  * utilisateur manager authentifié.
                  */
-                'created_by' =>
+                    'created_by' =>
                     null,
 
-                'created_at' =>
+                    'created_at' =>
                     $now,
-            ]);
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 5. Réponse
         |--------------------------------------------------------------------------
         */
 
-        return response()->json([
-            'ok' => true,
+            return response()->json([
+                'ok' => true,
 
-            'day' => [
-                'id' => (int) $day->id,
-                'date' => $day->production_date,
-                'status' => 'in_progress',
-            ],
+                'day' => [
+                    'id' => (int) $day->id,
+                    'date' => $day->production_date,
+                    'status' => 'in_progress',
+                ],
 
-            'reason' => $reason,
-        ]);
-    });
+                'reason' => $reason,
+            ]);
+        });
     }
 
     public function previewPreviousStock(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
-    ]);
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | 1. Journée courante
     |--------------------------------------------------------------------------
     */
 
-    $day = DB::table('y_production_days')
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->where('production_date', $date)
-        ->first();
-
-    if (!$day) {
-        return response()->json([
-            'error' => 'production_day_not_found',
-            'message' =>
-                'La feuille de production demandée n’existe pas.',
-        ], 404);
-    }
-
-    /*
-     * On n'actualise jamais une journée déjà terminée
-     * ou clôturée.
-     */
-    if ($day->status !== 'in_progress') {
-        return response()->json([
-            'error' => 'production_day_not_editable',
-            'message' =>
-                'Le stock J-1 ne peut être actualisé que sur une feuille en cours.',
-            'status' => $day->status,
-        ], 409);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | 2. Veille calendaire
-    |--------------------------------------------------------------------------
-    */
-
-    $previousDate =
-        \Illuminate\Support\Carbon::createFromFormat(
-            'Y-m-d',
-            $date
-        )
-            ->subDay()
-            ->toDateString();
-
-    $previousDay = DB::table('y_production_days')
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->where('production_date', $previousDate)
-        ->first();
-
-    /*
-    |--------------------------------------------------------------------------
-    | 3. Journée précédente absente
-    |--------------------------------------------------------------------------
-    */
-
-    if (!$previousDay) {
-        return response()->json([
-            'ok' => true,
-            'available' => false,
-
-            'reason' =>
-                'previous_day_not_found',
-
-            'previous_date' =>
-                $previousDate,
-
-            'previous_day_status' =>
-                null,
-
-            'differences_count' => 0,
-            'differences' => [],
-
-            'message' =>
-                'Aucune feuille de production n’existe pour la veille.',
-        ]);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | 4. La veille doit être terminée ou clôturée
-    |--------------------------------------------------------------------------
-    */
-
-    if (
-        !in_array(
-            $previousDay->status,
-            [
-                'finished',
-                'closed',
-            ],
-            true
-        )
-    ) {
-        return response()->json([
-            'ok' => true,
-            'available' => false,
-
-            'reason' =>
-                'previous_day_not_final',
-
-            'previous_date' =>
-                $previousDate,
-
-            'previous_day_status' =>
-                $previousDay->status,
-
-            'differences_count' => 0,
-            'differences' => [],
-
-            'message' =>
-                'La production de la veille doit être terminée ou clôturée avant d’actualiser le stock J-1.',
-        ]);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | 5. Produits de la journée courante
-    |--------------------------------------------------------------------------
-    |
-    | On utilise le snapshot de la journée.
-    | On ne reconstruit rien depuis le catalogue courant.
-    |
-    */
-
-    $currentRows = DB::table(
-        'y_production_day_products as current_dp'
-    )
-
-        ->join(
-            'y_production_entries as current_e',
-            'current_e.production_day_product_id',
-            '=',
-            'current_dp.id'
-        )
-
-        ->where(
-            'current_dp.org_id',
-            $orgId
-        )
-
-        ->where(
-            'current_dp.site_id',
-            $siteId
-        )
-
-        ->where(
-            'current_dp.production_day_id',
-            $day->id
-        )
-
-        ->where(
-            'current_dp.is_included',
-            1
-        )
-
-        /*
-         * Les produits J ne peuvent jamais
-         * avoir de Stock J-1.
-         */
-        ->where(
-            'current_dp.conservation_snapshot',
-            '!=',
-            'J'
-        )
-
-        ->select([
-            'current_dp.id as production_day_product_id',
-            'current_dp.product_id',
-            'current_dp.product_name_snapshot as product_name',
-
-            'current_e.id as entry_id',
-            'current_e.stock_previous',
-        ])
-
-        ->get();
-
-    /*
-    |--------------------------------------------------------------------------
-    | 6. Stocks finaux de la veille
-    |--------------------------------------------------------------------------
-    */
-
-    $previousRows = DB::table(
-        'y_production_day_products as previous_dp'
-    )
-
-        ->join(
-            'y_production_entries as previous_e',
-            'previous_e.production_day_product_id',
-            '=',
-            'previous_dp.id'
-        )
-
-        ->where(
-            'previous_dp.org_id',
-            $orgId
-        )
-
-        ->where(
-            'previous_dp.site_id',
-            $siteId
-        )
-
-        ->where(
-            'previous_dp.production_day_id',
-            $previousDay->id
-        )
-
-        ->where(
-            'previous_dp.is_included',
-            1
-        )
-
-        ->select([
-            'previous_dp.product_id',
-            'previous_e.stock_end',
-        ])
-
-        ->get()
-
-        ->keyBy('product_id');
-
-    /*
-    |--------------------------------------------------------------------------
-    | 7. Comparaison
-    |--------------------------------------------------------------------------
-    */
-
-    $differences = [];
-
-    foreach ($currentRows as $currentRow) {
-
-        $previousRow =
-            $previousRows->get(
-                $currentRow->product_id
-            );
-
-        /*
-         * Produit absent de la feuille précédente :
-         * pas de stock à reporter.
-         */
-        $suggestedStock =
-            $previousRow
-                ? (
-                    $previousRow->stock_end === null
-                        ? null
-                        : (int) $previousRow->stock_end
-                )
-                : null;
-
-        $currentStock =
-            $currentRow->stock_previous === null
-                ? null
-                : (int) $currentRow->stock_previous;
-
-        /*
-         * Rien à signaler si la valeur est déjà identique.
-         */
-        if ($currentStock === $suggestedStock) {
-            continue;
-        }
-
-        $differences[] = [
-            'production_day_product_id' =>
-                (int) $currentRow->production_day_product_id,
-
-            'entry_id' =>
-                (int) $currentRow->entry_id,
-
-            'product_id' =>
-                (int) $currentRow->product_id,
-
-            'product_name' =>
-                $currentRow->product_name,
-
-            'current_stock_previous' =>
-                $currentStock,
-
-            'suggested_stock_previous' =>
-                $suggestedStock,
-        ];
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | 8. Réponse
-    |--------------------------------------------------------------------------
-    */
-
-    return response()->json([
-        'ok' => true,
-        'available' => true,
-
-        'previous_date' =>
-            $previousDate,
-
-        'previous_day_status' =>
-            $previousDay->status,
-
-        'differences_count' =>
-            count($differences),
-
-        'differences' =>
-            $differences,
-
-        'message' =>
-            count($differences) === 0
-                ? 'Le stock J-1 est déjà à jour.'
-                : count($differences)
-                    . ' stock(s) J-1 peuvent être actualisé(s).',
-    ]);
-    }
-
-    public function refreshPreviousStock(Request $request)
-    {
-    /*
-    |--------------------------------------------------------------------------
-    | Validation
-    |--------------------------------------------------------------------------
-    */
-
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
-
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
-    ]);
-
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $date = $validated['date'];
-
-    /*
-    |--------------------------------------------------------------------------
-    | Transaction
-    |--------------------------------------------------------------------------
-    */
-
-    return DB::transaction(function () use (
-        $orgId,
-        $siteId,
-        $date
-    ) {
-
-        /*
-        |--------------------------------------------------------------------------
-        | 1. Journée courante
-        |--------------------------------------------------------------------------
-        */
-
         $day = DB::table('y_production_days')
             ->where('org_id', $orgId)
             ->where('site_id', $siteId)
             ->where('production_date', $date)
-            ->lockForUpdate()
             ->first();
 
         if (!$day) {
             return response()->json([
-                'error' =>
-                    'production_day_not_found',
-
+                'error' => 'production_day_not_found',
                 'message' =>
-                    'La feuille de production demandée n’existe pas.',
+                'La feuille de production demandée n’existe pas.',
             ], 404);
         }
 
+        /*
+     * On n'actualise jamais une journée déjà terminée
+     * ou clôturée.
+     */
         if ($day->status !== 'in_progress') {
             return response()->json([
-                'error' =>
-                    'production_day_not_editable',
-
+                'error' => 'production_day_not_editable',
                 'message' =>
-                    'Le stock J-1 ne peut être actualisé que sur une feuille en cours.',
-
-                'status' =>
-                    $day->status,
+                'Le stock J-1 ne peut être actualisé que sur une feuille en cours.',
+                'status' => $day->status,
             ], 409);
         }
 
         /*
-        |--------------------------------------------------------------------------
-        | 2. Veille
-        |--------------------------------------------------------------------------
-        */
+    |--------------------------------------------------------------------------
+    | 2. Veille calendaire
+    |--------------------------------------------------------------------------
+    */
 
         $previousDate =
             \Illuminate\Support\Carbon::createFromFormat(
                 'Y-m-d',
                 $date
             )
-                ->subDay()
-                ->toDateString();
+            ->subDay()
+            ->toDateString();
 
         $previousDay = DB::table('y_production_days')
             ->where('org_id', $orgId)
             ->where('site_id', $siteId)
-            ->where(
-                'production_date',
-                $previousDate
-            )
+            ->where('production_date', $previousDate)
             ->first();
+
+        /*
+    |--------------------------------------------------------------------------
+    | 3. Journée précédente absente
+    |--------------------------------------------------------------------------
+    */
 
         if (!$previousDay) {
             return response()->json([
-                'error' =>
-                    'previous_production_day_not_found',
+                'ok' => true,
+                'available' => false,
+
+                'reason' =>
+                'previous_day_not_found',
+
+                'previous_date' =>
+                $previousDate,
+
+                'previous_day_status' =>
+                null,
+
+                'differences_count' => 0,
+                'differences' => [],
 
                 'message' =>
-                    'Aucune feuille de production n’existe pour la veille.',
-            ], 409);
+                'Aucune feuille de production n’existe pour la veille.',
+            ]);
         }
+
+        /*
+    |--------------------------------------------------------------------------
+    | 4. La veille doit être terminée ou clôturée
+    |--------------------------------------------------------------------------
+    */
 
         if (
             !in_array(
@@ -2923,22 +2589,35 @@ class ProductionController extends Controller
             )
         ) {
             return response()->json([
-                'error' =>
-                    'previous_production_day_not_final',
+                'ok' => true,
+                'available' => false,
+
+                'reason' =>
+                'previous_day_not_final',
+
+                'previous_date' =>
+                $previousDate,
+
+                'previous_day_status' =>
+                $previousDay->status,
+
+                'differences_count' => 0,
+                'differences' => [],
 
                 'message' =>
-                    'La production de la veille doit être terminée ou clôturée avant d’actualiser le stock J-1.',
-
-                'status' =>
-                    $previousDay->status,
-            ], 409);
+                'La production de la veille doit être terminée ou clôturée avant d’actualiser le stock J-1.',
+            ]);
         }
 
         /*
-        |--------------------------------------------------------------------------
-        | 3. Produits courants éligibles
-        |--------------------------------------------------------------------------
-        */
+    |--------------------------------------------------------------------------
+    | 5. Produits de la journée courante
+    |--------------------------------------------------------------------------
+    |
+    | On utilise le snapshot de la journée.
+    | On ne reconstruit rien depuis le catalogue courant.
+    |
+    */
 
         $currentRows = DB::table(
             'y_production_day_products as current_dp'
@@ -2971,6 +2650,10 @@ class ProductionController extends Controller
                 1
             )
 
+            /*
+         * Les produits J ne peuvent jamais
+         * avoir de Stock J-1.
+         */
             ->where(
                 'current_dp.conservation_snapshot',
                 '!=',
@@ -2978,7 +2661,10 @@ class ProductionController extends Controller
             )
 
             ->select([
+                'current_dp.id as production_day_product_id',
                 'current_dp.product_id',
+                'current_dp.product_name_snapshot as product_name',
+
                 'current_e.id as entry_id',
                 'current_e.stock_previous',
             ])
@@ -2986,10 +2672,10 @@ class ProductionController extends Controller
             ->get();
 
         /*
-        |--------------------------------------------------------------------------
-        | 4. Stocks finaux de la veille
-        |--------------------------------------------------------------------------
-        */
+    |--------------------------------------------------------------------------
+    | 6. Stocks finaux de la veille
+    |--------------------------------------------------------------------------
+    */
 
         $previousRows = DB::table(
             'y_production_day_products as previous_dp'
@@ -3032,12 +2718,12 @@ class ProductionController extends Controller
             ->keyBy('product_id');
 
         /*
-        |--------------------------------------------------------------------------
-        | 5. Valeurs réellement différentes
-        |--------------------------------------------------------------------------
-        */
+    |--------------------------------------------------------------------------
+    | 7. Comparaison
+    |--------------------------------------------------------------------------
+    */
 
-        $changes = [];
+        $differences = [];
 
         foreach ($currentRows as $currentRow) {
 
@@ -3046,55 +2732,371 @@ class ProductionController extends Controller
                     $currentRow->product_id
                 );
 
+            /*
+         * Produit absent de la feuille précédente :
+         * pas de stock à reporter.
+         */
             $suggestedStock =
                 $previousRow
-                    ? (
-                        $previousRow->stock_end === null
-                            ? null
-                            : (int) $previousRow->stock_end
-                    )
-                    : null;
+                ? (
+                    $previousRow->stock_end === null
+                    ? null
+                    : (int) $previousRow->stock_end
+                )
+                : null;
 
             $currentStock =
                 $currentRow->stock_previous === null
-                    ? null
-                    : (int) $currentRow->stock_previous;
+                ? null
+                : (int) $currentRow->stock_previous;
 
+            /*
+         * Rien à signaler si la valeur est déjà identique.
+         */
             if ($currentStock === $suggestedStock) {
                 continue;
             }
 
-            $changes[] = [
-                'entry_id' =>
-                    (int) $currentRow->entry_id,
+            $differences[] = [
+                'production_day_product_id' =>
+                (int) $currentRow->production_day_product_id,
 
-                'stock_previous' =>
-                    $suggestedStock,
+                'entry_id' =>
+                (int) $currentRow->entry_id,
+
+                'product_id' =>
+                (int) $currentRow->product_id,
+
+                'product_name' =>
+                $currentRow->product_name,
+
+                'current_stock_previous' =>
+                $currentStock,
+
+                'suggested_stock_previous' =>
+                $suggestedStock,
             ];
         }
 
         /*
+    |--------------------------------------------------------------------------
+    | 8. Réponse
+    |--------------------------------------------------------------------------
+    */
+
+        return response()->json([
+            'ok' => true,
+            'available' => true,
+
+            'previous_date' =>
+            $previousDate,
+
+            'previous_day_status' =>
+            $previousDay->status,
+
+            'differences_count' =>
+            count($differences),
+
+            'differences' =>
+            $differences,
+
+            'message' =>
+            count($differences) === 0
+                ? 'Le stock J-1 est déjà à jour.'
+                : count($differences)
+                . ' stock(s) J-1 peuvent être actualisé(s).',
+        ]);
+    }
+
+    public function refreshPreviousStock(Request $request)
+    {
+        /*
+    |--------------------------------------------------------------------------
+    | Validation
+    |--------------------------------------------------------------------------
+    */
+
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
+
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
+        ]);
+
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $date = $validated['date'];
+
+        /*
+    |--------------------------------------------------------------------------
+    | Transaction
+    |--------------------------------------------------------------------------
+    */
+
+        return DB::transaction(function () use (
+            $orgId,
+            $siteId,
+            $date
+        ) {
+
+            /*
+        |--------------------------------------------------------------------------
+        | 1. Journée courante
+        |--------------------------------------------------------------------------
+        */
+
+            $day = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where('production_date', $date)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$day) {
+                return response()->json([
+                    'error' =>
+                    'production_day_not_found',
+
+                    'message' =>
+                    'La feuille de production demandée n’existe pas.',
+                ], 404);
+            }
+
+            if ($day->status !== 'in_progress') {
+                return response()->json([
+                    'error' =>
+                    'production_day_not_editable',
+
+                    'message' =>
+                    'Le stock J-1 ne peut être actualisé que sur une feuille en cours.',
+
+                    'status' =>
+                    $day->status,
+                ], 409);
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | 2. Veille
+        |--------------------------------------------------------------------------
+        */
+
+            $previousDate =
+                \Illuminate\Support\Carbon::createFromFormat(
+                    'Y-m-d',
+                    $date
+                )
+                ->subDay()
+                ->toDateString();
+
+            $previousDay = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where(
+                    'production_date',
+                    $previousDate
+                )
+                ->first();
+
+            if (!$previousDay) {
+                return response()->json([
+                    'error' =>
+                    'previous_production_day_not_found',
+
+                    'message' =>
+                    'Aucune feuille de production n’existe pour la veille.',
+                ], 409);
+            }
+
+            if (
+                !in_array(
+                    $previousDay->status,
+                    [
+                        'finished',
+                        'closed',
+                    ],
+                    true
+                )
+            ) {
+                return response()->json([
+                    'error' =>
+                    'previous_production_day_not_final',
+
+                    'message' =>
+                    'La production de la veille doit être terminée ou clôturée avant d’actualiser le stock J-1.',
+
+                    'status' =>
+                    $previousDay->status,
+                ], 409);
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | 3. Produits courants éligibles
+        |--------------------------------------------------------------------------
+        */
+
+            $currentRows = DB::table(
+                'y_production_day_products as current_dp'
+            )
+
+                ->join(
+                    'y_production_entries as current_e',
+                    'current_e.production_day_product_id',
+                    '=',
+                    'current_dp.id'
+                )
+
+                ->where(
+                    'current_dp.org_id',
+                    $orgId
+                )
+
+                ->where(
+                    'current_dp.site_id',
+                    $siteId
+                )
+
+                ->where(
+                    'current_dp.production_day_id',
+                    $day->id
+                )
+
+                ->where(
+                    'current_dp.is_included',
+                    1
+                )
+
+                ->where(
+                    'current_dp.conservation_snapshot',
+                    '!=',
+                    'J'
+                )
+
+                ->select([
+                    'current_dp.product_id',
+                    'current_e.id as entry_id',
+                    'current_e.stock_previous',
+                ])
+
+                ->get();
+
+            /*
+        |--------------------------------------------------------------------------
+        | 4. Stocks finaux de la veille
+        |--------------------------------------------------------------------------
+        */
+
+            $previousRows = DB::table(
+                'y_production_day_products as previous_dp'
+            )
+
+                ->join(
+                    'y_production_entries as previous_e',
+                    'previous_e.production_day_product_id',
+                    '=',
+                    'previous_dp.id'
+                )
+
+                ->where(
+                    'previous_dp.org_id',
+                    $orgId
+                )
+
+                ->where(
+                    'previous_dp.site_id',
+                    $siteId
+                )
+
+                ->where(
+                    'previous_dp.production_day_id',
+                    $previousDay->id
+                )
+
+                ->where(
+                    'previous_dp.is_included',
+                    1
+                )
+
+                ->select([
+                    'previous_dp.product_id',
+                    'previous_e.stock_end',
+                ])
+
+                ->get()
+
+                ->keyBy('product_id');
+
+            /*
+        |--------------------------------------------------------------------------
+        | 5. Valeurs réellement différentes
+        |--------------------------------------------------------------------------
+        */
+
+            $changes = [];
+
+            foreach ($currentRows as $currentRow) {
+
+                $previousRow =
+                    $previousRows->get(
+                        $currentRow->product_id
+                    );
+
+                $suggestedStock =
+                    $previousRow
+                    ? (
+                        $previousRow->stock_end === null
+                        ? null
+                        : (int) $previousRow->stock_end
+                    )
+                    : null;
+
+                $currentStock =
+                    $currentRow->stock_previous === null
+                    ? null
+                    : (int) $currentRow->stock_previous;
+
+                if ($currentStock === $suggestedStock) {
+                    continue;
+                }
+
+                $changes[] = [
+                    'entry_id' =>
+                    (int) $currentRow->entry_id,
+
+                    'stock_previous' =>
+                    $suggestedStock,
+                ];
+            }
+
+            /*
         |--------------------------------------------------------------------------
         | 6. Rien à modifier
         |--------------------------------------------------------------------------
         */
 
-        if (count($changes) === 0) {
-            return response()->json([
-                'ok' => true,
+            if (count($changes) === 0) {
+                return response()->json([
+                    'ok' => true,
 
-                'updated_entries' =>
+                    'updated_entries' =>
                     0,
 
-                'previous_date' =>
+                    'previous_date' =>
                     $previousDate,
 
-                'message' =>
+                    'message' =>
                     'Le stock J-1 est déjà à jour.',
-            ]);
-        }
+                ]);
+            }
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 7. UPDATE groupé
         |--------------------------------------------------------------------------
@@ -3104,139 +3106,139 @@ class ProductionController extends Controller
         |
         */
 
-        $entryIds = [];
-        $cases = [];
+            $entryIds = [];
+            $cases = [];
 
-        foreach ($changes as $change) {
+            foreach ($changes as $change) {
 
-            $entryId =
-                (int) $change['entry_id'];
+                $entryId =
+                    (int) $change['entry_id'];
 
-            $entryIds[] =
-                $entryId;
+                $entryIds[] =
+                    $entryId;
 
-            $valueSql =
-                $change['stock_previous'] === null
+                $valueSql =
+                    $change['stock_previous'] === null
                     ? 'NULL'
                     : (string) (
                         (int) $change['stock_previous']
                     );
 
-            $cases[] =
-                'WHEN '
-                . $entryId
-                . ' THEN '
-                . $valueSql;
-        }
+                $cases[] =
+                    'WHEN '
+                    . $entryId
+                    . ' THEN '
+                    . $valueSql;
+            }
 
-        $caseSql =
-            'CASE id '
-            . implode(' ', $cases)
-            . ' ELSE stock_previous END';
+            $caseSql =
+                'CASE id '
+                . implode(' ', $cases)
+                . ' ELSE stock_previous END';
 
-        $now = now('UTC');
+            $now = now('UTC');
 
-        DB::table('y_production_entries')
+            DB::table('y_production_entries')
 
-            ->where(
-                'org_id',
-                $orgId
-            )
+                ->where(
+                    'org_id',
+                    $orgId
+                )
 
-            ->where(
-                'site_id',
-                $siteId
-            )
+                ->where(
+                    'site_id',
+                    $siteId
+                )
 
-            ->whereIn(
-                'id',
-                $entryIds
-            )
+                ->whereIn(
+                    'id',
+                    $entryIds
+                )
 
-            ->update([
-                'stock_previous' =>
+                ->update([
+                    'stock_previous' =>
                     DB::raw($caseSql),
 
-                'updated_by' =>
+                    'updated_by' =>
                     null,
 
-                'updated_at' =>
+                    'updated_at' =>
                     $now,
-            ]);
+                ]);
 
-        /*
+            /*
         |--------------------------------------------------------------------------
         | 8. Réponse
         |--------------------------------------------------------------------------
         */
 
-        return response()->json([
-            'ok' => true,
+            return response()->json([
+                'ok' => true,
 
-            'updated_entries' =>
+                'updated_entries' =>
                 count($changes),
 
-            'previous_date' =>
+                'previous_date' =>
                 $previousDate,
 
-            'message' =>
+                'message' =>
                 count($changes)
-                . ' stock(s) J-1 ont été actualisé(s).',
-        ]);
-    });
+                    . ' stock(s) J-1 ont été actualisé(s).',
+            ]);
+        });
     }
 
     public function history(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        /*
+            /*
          * On limite volontairement le nombre de journées retournées.
          * 90 jours suffisent largement pour la V1.
          */
-        'limit' => [
-            'sometimes',
-            'integer',
-            'min:1',
-            'max:365',
-        ],
-    ]);
+            'limit' => [
+                'sometimes',
+                'integer',
+                'min:1',
+                'max:365',
+            ],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
-    $limit = (int) ($validated['limit'] ?? 90);
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
+        $limit = (int) ($validated['limit'] ?? 90);
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Lecture des journées
     |--------------------------------------------------------------------------
@@ -3248,171 +3250,171 @@ class ProductionController extends Controller
     |
     */
 
-    $days = DB::table('y_production_days as d')
+        $days = DB::table('y_production_days as d')
 
-        ->where('d.org_id', $orgId)
-        ->where('d.site_id', $siteId)
+            ->where('d.org_id', $orgId)
+            ->where('d.site_id', $siteId)
 
-        ->select([
-            'd.id',
-            'd.production_date',
-            'd.status',
+            ->select([
+                'd.id',
+                'd.production_date',
+                'd.status',
 
-            'd.started_at',
-            'd.finished_at',
-            'd.closed_at',
+                'd.started_at',
+                'd.finished_at',
+                'd.closed_at',
 
-            'd.created_at',
-            'd.updated_at',
-        ])
+                'd.created_at',
+                'd.updated_at',
+            ])
 
-        /*
+            /*
          * Nombre de produits réellement inclus
          * dans le snapshot de cette journée.
          */
-        ->selectSub(
-            function ($query) use (
-                $orgId,
-                $siteId
-            ) {
-                $query
-                    ->from(
-                        'y_production_day_products as dp'
-                    )
+            ->selectSub(
+                function ($query) use (
+                    $orgId,
+                    $siteId
+                ) {
+                    $query
+                        ->from(
+                            'y_production_day_products as dp'
+                        )
 
-                    ->selectRaw('COUNT(*)')
+                        ->selectRaw('COUNT(*)')
 
-                    ->whereColumn(
-                        'dp.production_day_id',
-                        'd.id'
-                    )
+                        ->whereColumn(
+                            'dp.production_day_id',
+                            'd.id'
+                        )
 
-                    ->where(
-                        'dp.org_id',
-                        $orgId
-                    )
+                        ->where(
+                            'dp.org_id',
+                            $orgId
+                        )
 
-                    ->where(
-                        'dp.site_id',
-                        $siteId
-                    )
+                        ->where(
+                            'dp.site_id',
+                            $siteId
+                        )
 
-                    ->where(
-                        'dp.is_included',
-                        1
-                    );
-            },
-            'products_count'
-        )
+                        ->where(
+                            'dp.is_included',
+                            1
+                        );
+                },
+                'products_count'
+            )
 
-        /*
+            /*
          * Plus récent en premier.
          */
-        ->orderByDesc(
-            'd.production_date'
-        )
+            ->orderByDesc(
+                'd.production_date'
+            )
 
-        ->orderByDesc(
-            'd.id'
-        )
+            ->orderByDesc(
+                'd.id'
+            )
 
-        ->limit($limit)
+            ->limit($limit)
 
-        ->get()
+            ->get()
 
-        ->map(function ($day) {
-            return [
-                'id' =>
+            ->map(function ($day) {
+                return [
+                    'id' =>
                     (int) $day->id,
 
-                'date' =>
+                    'date' =>
                     $day->production_date,
 
-                'status' =>
+                    'status' =>
                     $day->status,
 
-                'products_count' =>
+                    'products_count' =>
                     (int) $day->products_count,
 
-                'started_at' =>
+                    'started_at' =>
                     $day->started_at,
 
-                'finished_at' =>
+                    'finished_at' =>
                     $day->finished_at,
 
-                'closed_at' =>
+                    'closed_at' =>
                     $day->closed_at,
 
-                'created_at' =>
+                    'created_at' =>
                     $day->created_at,
 
-                'updated_at' =>
+                    'updated_at' =>
                     $day->updated_at,
-            ];
-        });
+                ];
+            });
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
+        return response()->json([
+            'ok' => true,
 
-        'org_id' =>
+            'org_id' =>
             $orgId,
 
-        'site_id' =>
+            'site_id' =>
             $siteId,
 
-        'count' =>
+            'count' =>
             $days->count(),
 
-        'days' =>
+            'days' =>
             $days,
-    ]);
+        ]);
     }
 
     public function products(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
-    ]);
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
+        ]);
 
-    $orgId = (int) config('tempo.default_org_id');
-    $siteId = (int) $validated['site_id'];
+        $orgId = (int) config('tempo.default_org_id');
+        $siteId = (int) $validated['site_id'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' => 'site_not_found',
-            'message' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' => 'site_not_found',
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Catalogue
     |--------------------------------------------------------------------------
@@ -3428,298 +3430,298 @@ class ProductionController extends Controller
     |
     */
 
-    $rows = DB::table('y_products as p')
+        $rows = DB::table('y_products as p')
 
-        ->join(
-            'y_product_categories as c',
-            'c.id',
-            '=',
-            'p.category_id'
-        )
+            ->join(
+                'y_product_categories as c',
+                'c.id',
+                '=',
+                'p.category_id'
+            )
 
-        ->join(
-            'y_product_families as f',
-            'f.id',
-            '=',
-            'c.family_id'
-        )
+            ->join(
+                'y_product_families as f',
+                'f.id',
+                '=',
+                'c.family_id'
+            )
 
-        ->where('p.org_id', $orgId)
-        ->where('p.site_id', $siteId)
+            ->where('p.org_id', $orgId)
+            ->where('p.site_id', $siteId)
 
-        ->where('c.org_id', $orgId)
-        ->where('c.site_id', $siteId)
+            ->where('c.org_id', $orgId)
+            ->where('c.site_id', $siteId)
 
-        ->where('f.org_id', $orgId)
-        ->where('f.site_id', $siteId)
+            ->where('f.org_id', $orgId)
+            ->where('f.site_id', $siteId)
 
-        ->select([
-            /*
+            ->select([
+                /*
              * Produit
              */
-            'p.id as product_id',
-            'p.name as product_name',
-            'p.conservation',
-            'p.display_order as product_order',
-            'p.is_active as product_is_active',
+                'p.id as product_id',
+                'p.name as product_name',
+                'p.conservation',
+                'p.display_order as product_order',
+                'p.is_active as product_is_active',
 
-            /*
+                /*
              * Catégorie
              */
-            'c.id as category_id',
-            'c.name as category_name',
-            'c.display_order as category_order',
-            'c.is_active as category_is_active',
+                'c.id as category_id',
+                'c.name as category_name',
+                'c.display_order as category_order',
+                'c.is_active as category_is_active',
 
-            /*
+                /*
              * Famille
              */
-            'f.id as family_id',
-            'f.name as family_name',
-            'f.display_order as family_order',
-            'f.is_active as family_is_active',
-        ])
+                'f.id as family_id',
+                'f.name as family_name',
+                'f.display_order as family_order',
+                'f.is_active as family_is_active',
+            ])
 
-        ->orderBy('f.display_order')
-        ->orderBy('f.name')
+            ->orderBy('f.display_order')
+            ->orderBy('f.name')
 
-        ->orderBy('c.display_order')
-        ->orderBy('c.name')
+            ->orderBy('c.display_order')
+            ->orderBy('c.name')
 
-        ->orderBy('p.display_order')
-        ->orderBy('p.name')
+            ->orderBy('p.display_order')
+            ->orderBy('p.name')
 
-        ->get()
+            ->get()
 
-        ->map(function ($row) {
-            return [
-                'id' =>
+            ->map(function ($row) {
+                return [
+                    'id' =>
                     (int) $row->product_id,
 
-                'name' =>
+                    'name' =>
                     $row->product_name,
 
-                'conservation' =>
+                    'conservation' =>
                     $row->conservation,
 
-                'display_order' =>
+                    'display_order' =>
                     (int) $row->product_order,
 
-                'is_active' =>
+                    'is_active' =>
                     (bool) $row->product_is_active,
 
-                'category' => [
-                    'id' =>
+                    'category' => [
+                        'id' =>
                         (int) $row->category_id,
 
-                    'name' =>
+                        'name' =>
                         $row->category_name,
 
-                    'display_order' =>
+                        'display_order' =>
                         (int) $row->category_order,
 
-                    'is_active' =>
+                        'is_active' =>
                         (bool) $row->category_is_active,
-                ],
+                    ],
 
-                'family' => [
-                    'id' =>
+                    'family' => [
+                        'id' =>
                         (int) $row->family_id,
 
-                    'name' =>
+                        'name' =>
                         $row->family_name,
 
-                    'display_order' =>
+                        'display_order' =>
                         (int) $row->family_order,
 
-                    'is_active' =>
+                        'is_active' =>
                         (bool) $row->family_is_active,
-                ],
-            ];
-        });
+                    ],
+                ];
+            });
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Compteurs
     |--------------------------------------------------------------------------
     */
 
-    $activeCount =
-        $rows
+        $activeCount =
+            $rows
             ->where('is_active', true)
             ->count();
 
-    $inactiveCount =
-        $rows
+        $inactiveCount =
+            $rows
             ->where('is_active', false)
             ->count();
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
+        return response()->json([
+            'ok' => true,
 
-        'org_id' =>
+            'org_id' =>
             $orgId,
 
-        'site_id' =>
+            'site_id' =>
             $siteId,
 
-        'products_count' =>
+            'products_count' =>
             $rows->count(),
 
-        'active_count' =>
+            'active_count' =>
             $activeCount,
 
-        'inactive_count' =>
+            'inactive_count' =>
             $inactiveCount,
 
-        'products' =>
+            'products' =>
             $rows->values(),
-    ]);
+        ]);
     }
 
     public function setProductActive(
-    Request $request,
-    int $productId
+        Request $request,
+        int $productId
     ) {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'is_active' => [
-            'required',
-            'boolean',
-        ],
-    ]);
+            'is_active' => [
+                'required',
+                'boolean',
+            ],
+        ]);
 
-    $orgId =
-        (int) config('tempo.default_org_id');
+        $orgId =
+            (int) config('tempo.default_org_id');
 
-    $siteId =
-        (int) $validated['site_id'];
+        $siteId =
+            (int) $validated['site_id'];
 
-    $isActive =
-        (bool) $validated['is_active'];
+        $isActive =
+            (bool) $validated['is_active'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' =>
                 'site_not_found',
 
-            'message' =>
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Produit + catégorie + famille
     |--------------------------------------------------------------------------
     */
 
-    $product = DB::table('y_products as p')
+        $product = DB::table('y_products as p')
 
-        ->join(
-            'y_product_categories as c',
-            'c.id',
-            '=',
-            'p.category_id'
-        )
+            ->join(
+                'y_product_categories as c',
+                'c.id',
+                '=',
+                'p.category_id'
+            )
 
-        ->join(
-            'y_product_families as f',
-            'f.id',
-            '=',
-            'c.family_id'
-        )
+            ->join(
+                'y_product_families as f',
+                'f.id',
+                '=',
+                'c.family_id'
+            )
 
-        ->where(
-            'p.id',
-            $productId
-        )
+            ->where(
+                'p.id',
+                $productId
+            )
 
-        ->where(
-            'p.org_id',
-            $orgId
-        )
+            ->where(
+                'p.org_id',
+                $orgId
+            )
 
-        ->where(
-            'p.site_id',
-            $siteId
-        )
+            ->where(
+                'p.site_id',
+                $siteId
+            )
 
-        ->where(
-            'c.org_id',
-            $orgId
-        )
+            ->where(
+                'c.org_id',
+                $orgId
+            )
 
-        ->where(
-            'c.site_id',
-            $siteId
-        )
+            ->where(
+                'c.site_id',
+                $siteId
+            )
 
-        ->where(
-            'f.org_id',
-            $orgId
-        )
+            ->where(
+                'f.org_id',
+                $orgId
+            )
 
-        ->where(
-            'f.site_id',
-            $siteId
-        )
+            ->where(
+                'f.site_id',
+                $siteId
+            )
 
-        ->select([
-            'p.id',
-            'p.name',
-            'p.is_active',
+            ->select([
+                'p.id',
+                'p.name',
+                'p.is_active',
 
-            'c.id as category_id',
-            'c.name as category_name',
-            'c.is_active as category_is_active',
+                'c.id as category_id',
+                'c.name as category_name',
+                'c.is_active as category_is_active',
 
-            'f.id as family_id',
-            'f.name as family_name',
-            'f.is_active as family_is_active',
-        ])
+                'f.id as family_id',
+                'f.name as family_name',
+                'f.is_active as family_is_active',
+            ])
 
-        ->first();
+            ->first();
 
-    if (!$product) {
-        return response()->json([
-            'error' =>
+        if (!$product) {
+            return response()->json([
+                'error' =>
                 'product_not_found',
 
-            'message' =>
+                'message' =>
                 'Le produit demandé est introuvable pour ce site.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réactivation : parents obligatoirement actifs
     |--------------------------------------------------------------------------
@@ -3731,683 +3733,683 @@ class ProductionController extends Controller
     |
     */
 
-    if (
-        $isActive
-        && (
-            !(bool) $product->category_is_active
-            || !(bool) $product->family_is_active
-        )
-    ) {
-        return response()->json([
-            'error' =>
+        if (
+            $isActive
+            && (
+                !(bool) $product->category_is_active
+                || !(bool) $product->family_is_active
+            )
+        ) {
+            return response()->json([
+                'error' =>
                 'product_parent_inactive',
 
-            'message' =>
+                'message' =>
                 'Le produit ne peut pas être activé car sa catégorie ou sa famille est inactive.',
 
-            'category' => [
-                'id' =>
+                'category' => [
+                    'id' =>
                     (int) $product->category_id,
 
-                'name' =>
+                    'name' =>
                     $product->category_name,
 
-                'is_active' =>
+                    'is_active' =>
                     (bool) $product->category_is_active,
-            ],
+                ],
 
-            'family' => [
-                'id' =>
+                'family' => [
+                    'id' =>
                     (int) $product->family_id,
 
-                'name' =>
+                    'name' =>
                     $product->family_name,
 
-                'is_active' =>
+                    'is_active' =>
                     (bool) $product->family_is_active,
-            ],
-        ], 409);
-    }
+                ],
+            ], 409);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Idempotence
     |--------------------------------------------------------------------------
     */
 
-    $currentIsActive =
-        (bool) $product->is_active;
+        $currentIsActive =
+            (bool) $product->is_active;
 
-    if (
-        $currentIsActive
-        === $isActive
-    ) {
-        return response()->json([
-            'ok' => true,
-            'changed' => false,
+        if (
+            $currentIsActive
+            === $isActive
+        ) {
+            return response()->json([
+                'ok' => true,
+                'changed' => false,
 
-            'product' => [
-                'id' =>
+                'product' => [
+                    'id' =>
                     (int) $product->id,
 
-                'name' =>
+                    'name' =>
                     $product->name,
 
-                'is_active' =>
+                    'is_active' =>
                     $currentIsActive,
-            ],
+                ],
 
-            'message' =>
+                'message' =>
                 $currentIsActive
                     ? 'Le produit est déjà actif.'
                     : 'Le produit est déjà inactif.',
-        ]);
-    }
+            ]);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Mise à jour
     |--------------------------------------------------------------------------
     */
 
-    $now = now('UTC');
+        $now = now('UTC');
 
-    DB::table('y_products')
+        DB::table('y_products')
 
-        ->where(
-            'id',
-            $productId
-        )
+            ->where(
+                'id',
+                $productId
+            )
 
-        ->where(
-            'org_id',
-            $orgId
-        )
+            ->where(
+                'org_id',
+                $orgId
+            )
 
-        ->where(
-            'site_id',
-            $siteId
-        )
+            ->where(
+                'site_id',
+                $siteId
+            )
 
-        ->update([
-            'is_active' =>
+            ->update([
+                'is_active' =>
                 $isActive ? 1 : 0,
 
-            'updated_by' =>
+                'updated_by' =>
                 null,
 
-            'updated_at' =>
+                'updated_at' =>
                 $now,
-        ]);
+            ]);
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
-        'changed' => true,
+        return response()->json([
+            'ok' => true,
+            'changed' => true,
 
-        'product' => [
-            'id' =>
+            'product' => [
+                'id' =>
                 (int) $product->id,
 
-            'name' =>
+                'name' =>
                 $product->name,
 
-            'is_active' =>
+                'is_active' =>
                 $isActive,
-        ],
+            ],
 
-        'message' =>
+            'message' =>
             $isActive
                 ? 'Produit activé.'
                 : 'Produit désactivé.',
-    ]);
+        ]);
     }
 
     public function updateProduct(
-    Request $request,
-    int $productId
+        Request $request,
+        int $productId
     ) {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'name' => [
-            'required',
-            'string',
-            'max:255',
-        ],
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+            ],
 
-        'category_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+            'category_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'conservation' => [
-            'required',
-            'string',
-            'in:J,J+1,J+2,J+3',
-        ],
-    ]);
+            'conservation' => [
+                'required',
+                'string',
+                'in:J,J+1,J+2,J+3',
+            ],
+        ]);
 
-    $orgId =
-        (int) config('tempo.default_org_id');
+        $orgId =
+            (int) config('tempo.default_org_id');
 
-    $siteId =
-        (int) $validated['site_id'];
+        $siteId =
+            (int) $validated['site_id'];
 
-    $name =
-        trim($validated['name']);
+        $name =
+            trim($validated['name']);
 
-    $categoryId =
-        (int) $validated['category_id'];
+        $categoryId =
+            (int) $validated['category_id'];
 
-    $conservation =
-        $validated['conservation'];
+        $conservation =
+            $validated['conservation'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Nom vide après trim
     |--------------------------------------------------------------------------
     */
 
-    if ($name === '') {
-        return response()->json([
-            'error' =>
+        if ($name === '') {
+            return response()->json([
+                'error' =>
                 'product_name_empty',
 
-            'message' =>
+                'message' =>
                 'Le nom du produit ne peut pas être vide.',
-        ], 422);
-    }
+            ], 422);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Vérification du site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' =>
                 'site_not_found',
 
-            'message' =>
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Produit
     |--------------------------------------------------------------------------
     */
 
-    $product = DB::table('y_products')
-        ->where('id', $productId)
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->first();
+        $product = DB::table('y_products')
+            ->where('id', $productId)
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->first();
 
-    if (!$product) {
-        return response()->json([
-            'error' =>
+        if (!$product) {
+            return response()->json([
+                'error' =>
                 'product_not_found',
 
-            'message' =>
+                'message' =>
                 'Le produit demandé est introuvable pour ce site.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Catégorie cible + famille
     |--------------------------------------------------------------------------
     */
 
-    $category = DB::table(
-        'y_product_categories as c'
-    )
-
-        ->join(
-            'y_product_families as f',
-            'f.id',
-            '=',
-            'c.family_id'
+        $category = DB::table(
+            'y_product_categories as c'
         )
 
-        ->where(
-            'c.id',
-            $categoryId
-        )
+            ->join(
+                'y_product_families as f',
+                'f.id',
+                '=',
+                'c.family_id'
+            )
 
-        ->where(
-            'c.org_id',
-            $orgId
-        )
+            ->where(
+                'c.id',
+                $categoryId
+            )
 
-        ->where(
-            'c.site_id',
-            $siteId
-        )
+            ->where(
+                'c.org_id',
+                $orgId
+            )
 
-        ->where(
-            'f.org_id',
-            $orgId
-        )
+            ->where(
+                'c.site_id',
+                $siteId
+            )
 
-        ->where(
-            'f.site_id',
-            $siteId
-        )
+            ->where(
+                'f.org_id',
+                $orgId
+            )
 
-        ->select([
-            'c.id as category_id',
-            'c.name as category_name',
-            'c.display_order as category_order',
-            'c.is_active as category_is_active',
+            ->where(
+                'f.site_id',
+                $siteId
+            )
 
-            'f.id as family_id',
-            'f.name as family_name',
-            'f.display_order as family_order',
-            'f.is_active as family_is_active',
-        ])
+            ->select([
+                'c.id as category_id',
+                'c.name as category_name',
+                'c.display_order as category_order',
+                'c.is_active as category_is_active',
 
-        ->first();
+                'f.id as family_id',
+                'f.name as family_name',
+                'f.display_order as family_order',
+                'f.is_active as family_is_active',
+            ])
 
-    if (!$category) {
-        return response()->json([
-            'error' =>
+            ->first();
+
+        if (!$category) {
+            return response()->json([
+                'error' =>
                 'category_not_found',
 
-            'message' =>
+                'message' =>
                 'La catégorie demandée est introuvable pour ce site.',
-        ], 422);
-    }
+            ], 422);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Produit actif -> parents actifs obligatoires
     |--------------------------------------------------------------------------
     */
 
-    if (
-        (bool) $product->is_active
-        && (
-            !(bool) $category->category_is_active
-            || !(bool) $category->family_is_active
-        )
-    ) {
-        return response()->json([
-            'error' =>
+        if (
+            (bool) $product->is_active
+            && (
+                !(bool) $category->category_is_active
+                || !(bool) $category->family_is_active
+            )
+        ) {
+            return response()->json([
+                'error' =>
                 'product_parent_inactive',
 
-            'message' =>
+                'message' =>
                 'Un produit actif ne peut pas être placé dans une catégorie ou une famille inactive.',
-        ], 409);
-    }
+            ], 409);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Nom déjà utilisé
     |--------------------------------------------------------------------------
     */
 
-    $duplicateName = DB::table('y_products')
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->where('name', $name)
-        ->where('id', '!=', $productId)
-        ->exists();
+        $duplicateName = DB::table('y_products')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('name', $name)
+            ->where('id', '!=', $productId)
+            ->exists();
 
-    if ($duplicateName) {
-        return response()->json([
-            'error' =>
+        if ($duplicateName) {
+            return response()->json([
+                'error' =>
                 'product_name_already_exists',
 
-            'message' =>
+                'message' =>
                 'Un autre produit porte déjà ce nom.',
-        ], 422);
-    }
+            ], 422);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Mise à jour
     |--------------------------------------------------------------------------
     */
 
-    $now = now('UTC');
+        $now = now('UTC');
 
-    DB::table('y_products')
+        DB::table('y_products')
 
-        ->where(
-            'id',
-            $productId
-        )
+            ->where(
+                'id',
+                $productId
+            )
 
-        ->where(
-            'org_id',
-            $orgId
-        )
+            ->where(
+                'org_id',
+                $orgId
+            )
 
-        ->where(
-            'site_id',
-            $siteId
-        )
+            ->where(
+                'site_id',
+                $siteId
+            )
 
-        ->update([
-            'name' =>
+            ->update([
+                'name' =>
                 $name,
 
-            'category_id' =>
+                'category_id' =>
                 $categoryId,
 
-            'conservation' =>
+                'conservation' =>
                 $conservation,
 
-            'updated_by' =>
+                'updated_by' =>
                 null,
 
-            'updated_at' =>
+                'updated_at' =>
                 $now,
-        ]);
+            ]);
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
+        return response()->json([
+            'ok' => true,
 
-        'product' => [
-            'id' =>
+            'product' => [
+                'id' =>
                 (int) $productId,
 
-            'name' =>
+                'name' =>
                 $name,
 
-            'conservation' =>
+                'conservation' =>
                 $conservation,
 
-            'display_order' =>
+                'display_order' =>
                 (int) $product->display_order,
 
-            'is_active' =>
+                'is_active' =>
                 (bool) $product->is_active,
 
-            'category' => [
-                'id' =>
+                'category' => [
+                    'id' =>
                     (int) $category->category_id,
 
-                'name' =>
+                    'name' =>
                     $category->category_name,
 
-                'display_order' =>
+                    'display_order' =>
                     (int) $category->category_order,
 
-                'is_active' =>
+                    'is_active' =>
                     (bool) $category->category_is_active,
-            ],
+                ],
 
-            'family' => [
-                'id' =>
+                'family' => [
+                    'id' =>
                     (int) $category->family_id,
 
-                'name' =>
+                    'name' =>
                     $category->family_name,
 
-                'display_order' =>
+                    'display_order' =>
                     (int) $category->family_order,
 
-                'is_active' =>
+                    'is_active' =>
                     (bool) $category->family_is_active,
+                ],
             ],
-        ],
 
-        'message' =>
+            'message' =>
             'Produit modifié.',
-    ]);
+        ]);
     }
 
     public function createProduct(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'name' => [
-            'required',
-            'string',
-            'max:255',
-        ],
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+            ],
 
-        'category_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+            'category_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'conservation' => [
-            'required',
-            'string',
-            'in:J,J+1,J+2,J+3',
-        ],
+            'conservation' => [
+                'required',
+                'string',
+                'in:J,J+1,J+2,J+3',
+            ],
 
-        'is_active' => [
-            'required',
-            'boolean',
-        ],
-    ]);
+            'is_active' => [
+                'required',
+                'boolean',
+            ],
+        ]);
 
-    $orgId =
-        (int) config('tempo.default_org_id');
+        $orgId =
+            (int) config('tempo.default_org_id');
 
-    $siteId =
-        (int) $validated['site_id'];
+        $siteId =
+            (int) $validated['site_id'];
 
-    $name =
-        trim($validated['name']);
+        $name =
+            trim($validated['name']);
 
-    $categoryId =
-        (int) $validated['category_id'];
+        $categoryId =
+            (int) $validated['category_id'];
 
-    $conservation =
-        $validated['conservation'];
+        $conservation =
+            $validated['conservation'];
 
-    $isActive =
-        (bool) $validated['is_active'];
+        $isActive =
+            (bool) $validated['is_active'];
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Nom vide après trim
     |--------------------------------------------------------------------------
     */
 
-    if ($name === '') {
-        return response()->json([
-            'error' =>
+        if ($name === '') {
+            return response()->json([
+                'error' =>
                 'product_name_empty',
 
-            'message' =>
+                'message' =>
                 'Le nom du produit ne peut pas être vide.',
-        ], 422);
-    }
+            ], 422);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Site
     |--------------------------------------------------------------------------
     */
 
-    $siteExists = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->exists();
+        $siteExists = DB::table('y_sites')
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->exists();
 
-    if (!$siteExists) {
-        return response()->json([
-            'error' =>
+        if (!$siteExists) {
+            return response()->json([
+                'error' =>
                 'site_not_found',
 
-            'message' =>
+                'message' =>
                 'Le site demandé est introuvable pour cette organisation.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Catégorie + famille
     |--------------------------------------------------------------------------
     */
 
-    $category = DB::table(
-        'y_product_categories as c'
-    )
-
-        ->join(
-            'y_product_families as f',
-            'f.id',
-            '=',
-            'c.family_id'
+        $category = DB::table(
+            'y_product_categories as c'
         )
 
-        ->where(
-            'c.id',
-            $categoryId
-        )
+            ->join(
+                'y_product_families as f',
+                'f.id',
+                '=',
+                'c.family_id'
+            )
 
-        ->where(
-            'c.org_id',
-            $orgId
-        )
+            ->where(
+                'c.id',
+                $categoryId
+            )
 
-        ->where(
-            'c.site_id',
-            $siteId
-        )
+            ->where(
+                'c.org_id',
+                $orgId
+            )
 
-        ->where(
-            'f.org_id',
-            $orgId
-        )
+            ->where(
+                'c.site_id',
+                $siteId
+            )
 
-        ->where(
-            'f.site_id',
-            $siteId
-        )
+            ->where(
+                'f.org_id',
+                $orgId
+            )
 
-        ->select([
-            'c.id as category_id',
-            'c.name as category_name',
-            'c.display_order as category_order',
-            'c.is_active as category_is_active',
+            ->where(
+                'f.site_id',
+                $siteId
+            )
 
-            'f.id as family_id',
-            'f.name as family_name',
-            'f.display_order as family_order',
-            'f.is_active as family_is_active',
-        ])
+            ->select([
+                'c.id as category_id',
+                'c.name as category_name',
+                'c.display_order as category_order',
+                'c.is_active as category_is_active',
 
-        ->first();
+                'f.id as family_id',
+                'f.name as family_name',
+                'f.display_order as family_order',
+                'f.is_active as family_is_active',
+            ])
 
-    if (!$category) {
-        return response()->json([
-            'error' =>
+            ->first();
+
+        if (!$category) {
+            return response()->json([
+                'error' =>
                 'category_not_found',
 
-            'message' =>
+                'message' =>
                 'La catégorie demandée est introuvable pour ce site.',
-        ], 422);
-    }
+            ], 422);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Produit actif -> catégorie et famille actives
     |--------------------------------------------------------------------------
     */
 
-    if (
-        $isActive
-        && (
-            !(bool) $category->category_is_active
-            || !(bool) $category->family_is_active
-        )
-    ) {
-        return response()->json([
-            'error' =>
+        if (
+            $isActive
+            && (
+                !(bool) $category->category_is_active
+                || !(bool) $category->family_is_active
+            )
+        ) {
+            return response()->json([
+                'error' =>
                 'product_parent_inactive',
 
-            'message' =>
+                'message' =>
                 'Un produit actif ne peut pas être créé dans une catégorie ou une famille inactive.',
-        ], 409);
-    }
+            ], 409);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Nom déjà utilisé
     |--------------------------------------------------------------------------
     */
 
-    $duplicateName = DB::table('y_products')
+        $duplicateName = DB::table('y_products')
 
-        ->where(
-            'org_id',
-            $orgId
-        )
+            ->where(
+                'org_id',
+                $orgId
+            )
 
-        ->where(
-            'site_id',
-            $siteId
-        )
+            ->where(
+                'site_id',
+                $siteId
+            )
 
-        ->where(
-            'name',
-            $name
-        )
+            ->where(
+                'name',
+                $name
+            )
 
-        ->exists();
+            ->exists();
 
-    if ($duplicateName) {
-        return response()->json([
-            'error' =>
+        if ($duplicateName) {
+            return response()->json([
+                'error' =>
                 'product_name_already_exists',
 
-            'message' =>
+                'message' =>
                 'Un produit porte déjà ce nom.',
-        ], 422);
-    }
+            ], 422);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Création
     |--------------------------------------------------------------------------
@@ -4420,184 +4422,184 @@ class ProductionController extends Controller
     |
     */
 
-    $now = now('UTC');
+        $now = now('UTC');
 
-    $productId = DB::table('y_products')
-        ->insertGetId([
-            'org_id' =>
+        $productId = DB::table('y_products')
+            ->insertGetId([
+                'org_id' =>
                 $orgId,
 
-            'site_id' =>
+                'site_id' =>
                 $siteId,
 
-            'category_id' =>
+                'category_id' =>
                 $categoryId,
 
-            'name' =>
+                'name' =>
                 $name,
 
-            /*
+                /*
              * Colonnes legacy conservées temporairement.
              */
-            'family' =>
+                'family' =>
                 $category->family_name,
 
-            'category' =>
+                'category' =>
                 $category->category_name,
 
-            'conservation' =>
+                'conservation' =>
                 $conservation,
 
-            'display_order' =>
+                'display_order' =>
                 1000,
 
-            'is_active' =>
+                'is_active' =>
                 $isActive ? 1 : 0,
 
-            'created_by' =>
+                'created_by' =>
                 null,
 
-            'created_at' =>
+                'created_at' =>
                 $now,
 
-            'updated_by' =>
+                'updated_by' =>
                 null,
 
-            'updated_at' =>
+                'updated_at' =>
                 $now,
-        ]);
+            ]);
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
+        return response()->json([
+            'ok' => true,
 
-        'product' => [
-            'id' =>
+            'product' => [
+                'id' =>
                 (int) $productId,
 
-            'name' =>
+                'name' =>
                 $name,
 
-            'conservation' =>
+                'conservation' =>
                 $conservation,
 
-            'display_order' =>
+                'display_order' =>
                 1000,
 
-            'is_active' =>
+                'is_active' =>
                 $isActive,
 
-            'category' => [
-                'id' =>
+                'category' => [
+                    'id' =>
                     (int) $category->category_id,
 
-                'name' =>
+                    'name' =>
                     $category->category_name,
 
-                'display_order' =>
+                    'display_order' =>
                     (int) $category->category_order,
 
-                'is_active' =>
+                    'is_active' =>
                     (bool) $category->category_is_active,
-            ],
+                ],
 
-            'family' => [
-                'id' =>
+                'family' => [
+                    'id' =>
                     (int) $category->family_id,
 
-                'name' =>
+                    'name' =>
                     $category->family_name,
 
-                'display_order' =>
+                    'display_order' =>
                     (int) $category->family_order,
 
-                'is_active' =>
+                    'is_active' =>
                     (bool) $category->family_is_active,
+                ],
             ],
-        ],
 
-        'message' =>
+            'message' =>
             'Produit créé.',
-    ], 201);
+        ], 201);
     }
 
     public function reorderProducts(Request $request)
     {
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Validation
     |--------------------------------------------------------------------------
     */
 
-    $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+        $validated = $request->validate([
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'category_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+            'category_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'product_ids' => [
-            'required',
-            'array',
-            'min:1',
-        ],
+            'product_ids' => [
+                'required',
+                'array',
+                'min:1',
+            ],
 
-        'product_ids.*' => [
-            'required',
-            'integer',
-            'min:1',
-            'distinct',
-        ],
-    ]);
+            'product_ids.*' => [
+                'required',
+                'integer',
+                'min:1',
+                'distinct',
+            ],
+        ]);
 
-    $orgId =
-        (int) config('tempo.default_org_id');
+        $orgId =
+            (int) config('tempo.default_org_id');
 
-    $siteId =
-        (int) $validated['site_id'];
+        $siteId =
+            (int) $validated['site_id'];
 
-    $categoryId =
-        (int) $validated['category_id'];
+        $categoryId =
+            (int) $validated['category_id'];
 
-    $productIds =
-        collect($validated['product_ids'])
-            ->map(fn ($id) => (int) $id)
+        $productIds =
+            collect($validated['product_ids'])
+            ->map(fn($id) => (int) $id)
             ->values();
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Catégorie
     |--------------------------------------------------------------------------
     */
 
-    $categoryExists = DB::table('y_product_categories')
-        ->where('id', $categoryId)
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->exists();
+        $categoryExists = DB::table('y_product_categories')
+            ->where('id', $categoryId)
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->exists();
 
-    if (!$categoryExists) {
-        return response()->json([
-            'error' =>
+        if (!$categoryExists) {
+            return response()->json([
+                'error' =>
                 'category_not_found',
 
-            'message' =>
+                'message' =>
                 'La catégorie demandée est introuvable.',
-        ], 404);
-    }
+            ], 404);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Produits actuellement présents dans cette catégorie
     |--------------------------------------------------------------------------
@@ -4606,16 +4608,16 @@ class ProductionController extends Controller
     |
     */
 
-    $existingProductIds = DB::table('y_products')
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
-        ->where('category_id', $categoryId)
-        ->pluck('id')
-        ->map(fn ($id) => (int) $id)
-        ->sort()
-        ->values();
+        $existingProductIds = DB::table('y_products')
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
+            ->where('category_id', $categoryId)
+            ->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->sort()
+            ->values();
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Sécurité
     |--------------------------------------------------------------------------
@@ -4625,24 +4627,24 @@ class ProductionController extends Controller
     |
     */
 
-    if (
-        $existingProductIds->all()
-        !==
-        $productIds
+        if (
+            $existingProductIds->all()
+            !==
+            $productIds
             ->sort()
             ->values()
             ->all()
-    ) {
-        return response()->json([
-            'error' =>
+        ) {
+            return response()->json([
+                'error' =>
                 'invalid_product_order',
 
-            'message' =>
+                'message' =>
                 'La liste des produits ne correspond pas à la catégorie.',
-        ], 422);
-    }
+            ], 422);
+        }
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Mise à jour
     |--------------------------------------------------------------------------
@@ -4653,77 +4655,76 @@ class ProductionController extends Controller
     |
     */
 
-    $orderedProductIds =
-        collect($validated['product_ids'])
-            ->map(fn ($id) => (int) $id)
+        $orderedProductIds =
+            collect($validated['product_ids'])
+            ->map(fn($id) => (int) $id)
             ->values();
 
-    $now = now('UTC');
+        $now = now('UTC');
 
-    DB::transaction(function () use (
-        $orderedProductIds,
-        $orgId,
-        $siteId,
-        $categoryId,
-        $now
-    ) {
-        foreach (
-            $orderedProductIds as
-            $index => $productId
+        DB::transaction(function () use (
+            $orderedProductIds,
+            $orgId,
+            $siteId,
+            $categoryId,
+            $now
         ) {
-            DB::table('y_products')
+            foreach (
+                $orderedProductIds as
+                $index => $productId
+            ) {
+                DB::table('y_products')
 
-                ->where(
-                    'id',
-                    $productId
-                )
+                    ->where(
+                        'id',
+                        $productId
+                    )
 
-                ->where(
-                    'org_id',
-                    $orgId
-                )
+                    ->where(
+                        'org_id',
+                        $orgId
+                    )
 
-                ->where(
-                    'site_id',
-                    $siteId
-                )
+                    ->where(
+                        'site_id',
+                        $siteId
+                    )
 
-                ->where(
-                    'category_id',
-                    $categoryId
-                )
+                    ->where(
+                        'category_id',
+                        $categoryId
+                    )
 
-                ->update([
-                    'display_order' =>
-                        ($index + 1) * 10,
+                    ->update([
+                        'display_order' => ($index + 1) * 10,
 
-                    'updated_by' =>
+                        'updated_by' =>
                         null,
 
-                    'updated_at' =>
+                        'updated_at' =>
                         $now,
-                ]);
-        }
-    });
+                    ]);
+            }
+        });
 
-    /*
+        /*
     |--------------------------------------------------------------------------
     | Réponse
     |--------------------------------------------------------------------------
     */
 
-    return response()->json([
-        'ok' => true,
+        return response()->json([
+            'ok' => true,
 
-        'category_id' =>
+            'category_id' =>
             $categoryId,
 
-        'product_ids' =>
+            'product_ids' =>
             $orderedProductIds,
 
-        'message' =>
+            'message' =>
             'Ordre des produits enregistré.',
-    ]);
+        ]);
     }
 
     public function overview(Request $request)
@@ -4735,16 +4736,16 @@ class ProductionController extends Controller
         */
 
         $validated = $request->validate([
-        'site_id' => [
-            'required',
-            'integer',
-            'min:1',
-        ],
+            'site_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-        'date' => [
-            'required',
-            'date_format:Y-m-d',
-        ],
+            'date' => [
+                'required',
+                'date_format:Y-m-d',
+            ],
         ]);
 
         $orgId =
@@ -4763,18 +4764,18 @@ class ProductionController extends Controller
         */
 
         $site = DB::table('y_sites')
-        ->where('id', $siteId)
-        ->where('org_id', $orgId)
-        ->first();
+            ->where('id', $siteId)
+            ->where('org_id', $orgId)
+            ->first();
 
         if (!$site) {
-        return response()->json([
-            'error' =>
+            return response()->json([
+                'error' =>
                 'site_not_found',
 
-            'message' =>
+                'message' =>
                 'Le site demandé est introuvable.',
-        ], 404);
+            ], 404);
         }
 
         /*
@@ -4784,20 +4785,20 @@ class ProductionController extends Controller
         */
 
         $currentDate =
-        \Illuminate\Support\Carbon::createFromFormat(
-            'Y-m-d',
-            $date
-        );
+            \Illuminate\Support\Carbon::createFromFormat(
+                'Y-m-d',
+                $date
+            );
 
         $weekStart =
-        $currentDate
+            $currentDate
             ->copy()
             ->startOfWeek(
                 \Illuminate\Support\Carbon::MONDAY
             );
 
         $weekEnd =
-        $weekStart
+            $weekStart
             ->copy()
             ->addDays(6);
 
@@ -4808,29 +4809,29 @@ class ProductionController extends Controller
         */
 
         $existingDays = DB::table('y_production_days')
-        ->where('org_id', $orgId)
-        ->where('site_id', $siteId)
+            ->where('org_id', $orgId)
+            ->where('site_id', $siteId)
 
-        ->whereBetween(
-            'production_date',
-            [
-                $weekStart->toDateString(),
-                $weekEnd->toDateString(),
-            ]
-        )
+            ->whereBetween(
+                'production_date',
+                [
+                    $weekStart->toDateString(),
+                    $weekEnd->toDateString(),
+                ]
+            )
 
-        ->select([
-            'id',
-            'production_date',
-            'status',
-            'started_at',
-            'finished_at',
-            'closed_at',
-        ])
+            ->select([
+                'id',
+                'production_date',
+                'status',
+                'started_at',
+                'finished_at',
+                'closed_at',
+            ])
 
-        ->get()
+            ->get()
 
-        ->keyBy('production_date');
+            ->keyBy('production_date');
 
         /*
         |--------------------------------------------------------------------------
@@ -4842,31 +4843,31 @@ class ProductionController extends Controller
 
         for ($index = 0; $index < 7; $index++) {
 
-        $dayDate =
-            $weekStart
+            $dayDate =
+                $weekStart
                 ->copy()
                 ->addDays($index)
                 ->toDateString();
 
-        $existingDay =
-            $existingDays->get(
-                $dayDate
-            );
+            $existingDay =
+                $existingDays->get(
+                    $dayDate
+                );
 
-        $week[] = [
-            'date' =>
+            $week[] = [
+                'date' =>
                 $dayDate,
 
-            'status' =>
+                'status' =>
                 $existingDay
                     ? $existingDay->status
                     : 'not_started',
 
-            'production_day_id' =>
+                'production_day_id' =>
                 $existingDay
                     ? (int) $existingDay->id
                     : null,
-        ];
+            ];
         }
 
         /*
@@ -4876,7 +4877,7 @@ class ProductionController extends Controller
         */
 
         $today =
-        $existingDays->get($date);
+            $existingDays->get($date);
 
         /*
         |--------------------------------------------------------------------------
@@ -4885,21 +4886,21 @@ class ProductionController extends Controller
         */
 
         $productsCount =
-        DB::table('y_products')
+            DB::table('y_products')
             ->where('org_id', $orgId)
             ->where('site_id', $siteId)
             ->count();
 
         $activeProductsCount =
-        DB::table('y_products')
+            DB::table('y_products')
             ->where('org_id', $orgId)
             ->where('site_id', $siteId)
             ->where('is_active', 1)
             ->count();
 
         $inactiveProductsCount =
-        $productsCount -
-        $activeProductsCount;
+            $productsCount -
+            $activeProductsCount;
 
         /*
         |--------------------------------------------------------------------------
@@ -4910,8 +4911,8 @@ class ProductionController extends Controller
         $todayProductsCount = 0;
 
         if ($today) {
-        $todayProductsCount =
-            DB::table('y_production_day_products')
+            $todayProductsCount =
+                DB::table('y_production_day_products')
                 ->where(
                     'org_id',
                     $orgId
@@ -4946,13 +4947,13 @@ class ProductionController extends Controller
         if (!$today) {
             $alerts[] = [
                 'code' =>
-                    'today_not_started',
+                'today_not_started',
 
                 'level' =>
-                    'warning',
+                'warning',
 
                 'message' =>
-                    'La production du jour n’est pas encore démarrée.',
+                'La production du jour n’est pas encore démarrée.',
             ];
         }
 
@@ -4965,13 +4966,13 @@ class ProductionController extends Controller
         ) {
             $alerts[] = [
                 'code' =>
-                    'today_in_progress',
+                'today_in_progress',
 
                 'level' =>
-                    'info',
+                'info',
 
                 'message' =>
-                    'La production du jour est en cours.',
+                'La production du jour est en cours.',
             ];
         }
 
@@ -4993,134 +4994,134 @@ class ProductionController extends Controller
         $oldOpenDays = DB::table('y_production_days')
 
             ->where(
-        'org_id',
-        $orgId
+                'org_id',
+                $orgId
             )
 
             ->where(
-        'site_id',
-        $siteId
+                'site_id',
+                $siteId
             )
 
             ->where(
-        'production_date',
-        '<',
-        $date
+                'production_date',
+                '<',
+                $date
             )
 
             ->where(
-        'status',
-        'in_progress'
+                'status',
+                'in_progress'
             )
 
             ->orderByDesc(
-        'production_date'
+                'production_date'
             )
 
             ->pluck(
-        'production_date'
+                'production_date'
             )
 
-        ->map(function ($dayDate) {
-            return
-                \Illuminate\Support\Carbon::createFromFormat(
-                    'Y-m-d',
-                    $dayDate
-                )
+            ->map(function ($dayDate) {
+                return
+                    \Illuminate\Support\Carbon::createFromFormat(
+                        'Y-m-d',
+                        $dayDate
+                    )
                     ->format(
                         'd/m/Y'
                     );
-        })
+            })
 
-        ->values();
-        
-            if (
-        $oldOpenDays->count() > 0
-            ) {
-        $daysText =
-            $oldOpenDays->implode(
-                ', '
-            );
-        
-        $alerts[] = [
-            'code' =>
+            ->values();
+
+        if (
+            $oldOpenDays->count() > 0
+        ) {
+            $daysText =
+                $oldOpenDays->implode(
+                    ', '
+                );
+
+            $alerts[] = [
+                'code' =>
                 'previous_days_in_progress',
-        
-            'level' =>
+
+                'level' =>
                 'warning',
-        
-            'message' =>
+
+                'message' =>
                 $oldOpenDays->count() === 1
                     ? 'Une journée précédente est encore en cours : '
-                        . $daysText
-                        . '.'
+                    . $daysText
+                    . '.'
                     : $oldOpenDays->count()
-                        . ' journées précédentes sont encore en cours : '
-                        . $daysText
-                        . '.',
-        ];
-            }
-        
+                    . ' journées précédentes sont encore en cours : '
+                    . $daysText
+                    . '.',
+            ];
+        }
+
         /*
         |--------------------------------------------------------------------------
         | Réponse
         |--------------------------------------------------------------------------
         */
-        
+
         return response()->json([
             'ok' =>
-                true,
-        
+            true,
+
             'org_id' =>
-                $orgId,
-        
+            $orgId,
+
             'site' => [
                 'id' =>
-                    (int) $site->id,
-        
+                (int) $site->id,
+
                 'name' =>
-                    $site->name,
+                $site->name,
             ],
-        
+
             'date' =>
-                $date,
-        
+            $date,
+
             'today' => [
                 'exists' =>
-                    $today !== null,
-        
+                $today !== null,
+
                 'production_day_id' =>
-                    $today
-                        ? (int) $today->id
-                        : null,
-        
+                $today
+                    ? (int) $today->id
+                    : null,
+
                 'status' =>
-                    $today
-                        ? $today->status
-                        : 'not_started',
-        
+                $today
+                    ? $today->status
+                    : 'not_started',
+
                 'products_count' =>
-                    $today
-                        ? $todayProductsCount
-                        : $activeProductsCount,
+                $today
+                    ? $todayProductsCount
+                    : $activeProductsCount,
             ],
-        
+
             'week' =>
-                $week,
-        
+            $week,
+
             'products' => [
                 'total' =>
-                    $productsCount,
-        
+                $productsCount,
+
                 'active' =>
-                    $activeProductsCount,
-        
+                $activeProductsCount,
+
                 'inactive' =>
-                    $inactiveProductsCount,
+                $inactiveProductsCount,
             ],
-        
+
             'alerts' =>
-                $alerts,
+            $alerts,
         ]);
     }
 }
