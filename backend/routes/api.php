@@ -3,6 +3,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProductionController;
+use App\Http\Controllers\SiteOperatingCalendarController;
 
 Route::get('/health', function () {
     DB::selectOne('SELECT 1 as ok');
@@ -19,6 +20,17 @@ Route::get('/sites', function (Request $request) {
         ->orderBy('id')
         ->get();
 });
+
+Route::prefix('sites/{siteId}/operating-calendar')
+    ->whereNumber('siteId')
+    ->controller(SiteOperatingCalendarController::class)
+    ->group(function () {
+        Route::get('/', 'show');
+        Route::get('/days', 'days');
+        Route::post('/weekly-rules', 'createWeeklyConfiguration');
+        Route::put('/exceptions/{date}', 'upsertException');
+        Route::delete('/exceptions/{date}', 'deleteException');
+    });
 
 // NOTE MVP:
 // `y_workers.site_id` est optionnel et ne représente pas forcément le site réel travaillé.
