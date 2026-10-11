@@ -2,11 +2,17 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\SiteOperatingCalendarService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 class ProductionController extends Controller
 {
+    public function __construct(
+        private readonly SiteOperatingCalendarService $siteOperatingCalendar
+    ) {}
+
     /**
      * Retourne la feuille de production d'un site pour une date.
      *
@@ -1120,7 +1126,7 @@ class ProductionController extends Controller
         return DB::transaction(function () use (
             $orgId,
             $siteId,
-            $date
+            $date,
         ) {
 
             /*
@@ -1146,6 +1152,41 @@ class ProductionController extends Controller
                     'day' => $existingDay,
                     'products_count' => $productsCount,
                 ]);
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | Calendrier d'exploitation
+        |--------------------------------------------------------------------------
+        |
+        | Une journée existante est toujours retournée avant ce contrôle.
+        | Le calendrier ne bloque donc que la création d'une nouvelle feuille.
+        |
+        */
+
+            try {
+                $calendar = $this->siteOperatingCalendar->resolveDate(
+                    $orgId,
+                    $siteId,
+                    $date
+                );
+            } catch (RuntimeException) {
+                return response()->json([
+                    'error' => 'calendar_data_inconsistent',
+                    'message' =>
+                    'Les données du calendrier d’exploitation sont incohérentes.',
+                ], 500);
+            }
+
+            if (
+                $calendar['is_configured']
+                && $calendar['is_open'] === false
+            ) {
+                return response()->json([
+                    'error' => 'site_closed',
+                    'message' =>
+                    'Le site est fermé à cette date selon son calendrier d’exploitation.',
+                ], 409);
             }
 
             $now = now('UTC');
