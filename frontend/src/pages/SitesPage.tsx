@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { apiGet } from "../api";
 
 type Site = { id: number; org_id: number; name: string };
@@ -25,7 +26,10 @@ export default function SitesPage() {
       <ul>
         {sites.map((s) => (
           <li key={s.id}>
-            #{s.id} — {s.name}
+            #{s.id} — {s.name}{" "}
+            <Link to={`/sites/${s.id}/operating-calendar`}>
+              Calendrier d’exploitation
+            </Link>
           </li>
         ))}
       </ul>

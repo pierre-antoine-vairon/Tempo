@@ -5,6 +5,7 @@ import ProductionLayout from "./layouts/ProductionLayout";
 
 import Home from "./pages/Home";
 import SitesPage from "./pages/SitesPage";
+import SiteOperatingCalendarPage from "./pages/SiteOperatingCalendarPage";
 import WorkersPage from "./pages/WorkersPage";
 import RostersPage from "./pages/RostersPage";
 import RosterDetailPage from "./pages/RosterDetailPage";
@@ -23,6 +24,10 @@ export default function App() {
         <Route element={<DashboardLayout />}>
           <Route path="/" element={<Home />} />
           <Route path="/sites" element={<SitesPage />} />
+          <Route
+            path="/sites/:siteId/operating-calendar"
+            element={<SiteOperatingCalendarPage />}
+          />
           <Route path="/workers" element={<WorkersPage />} />
           <Route path="/rosters" element={<RostersPage />} />
           <Route path="/rosters/:id" element={<RosterDetailPage />} />
