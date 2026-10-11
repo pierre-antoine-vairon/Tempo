@@ -6,6 +6,13 @@ type NullableNumber = number | null;
 
 type ProductionStatus = "in_progress" | "finished" | "closed";
 
+type OperatingCalendar = {
+  is_configured: boolean;
+  is_open: boolean | null;
+  source: "unconfigured" | "weekly_rule" | "exception";
+  reason: string | null;
+};
+
 type ProductionDay = {
   id: number;
   org_id: number;
@@ -54,6 +61,7 @@ type ProductionDayNotStartedResponse = {
   status: "not_started";
   products_count: number;
   products: [];
+  calendar: OperatingCalendar;
 };
 
 type ProductionDayExistingResponse = {
@@ -61,6 +69,7 @@ type ProductionDayExistingResponse = {
   day: ProductionDay;
   products_count: number;
   products: ProductionProduct[];
+  calendar: OperatingCalendar;
 };
 
 type ProductionDayResponse =
@@ -219,6 +228,7 @@ export default function ProductionDayPage() {
   );
 
   const [day, setDay] = useState<ProductionDay | null>(null);
+  const [calendar, setCalendar] = useState<OperatingCalendar | null>(null);
   const [products, setProducts] = useState<ProductionProduct[]>([]);
   const [dirtyProductIds, setDirtyProductIds] = useState<Set<number>>(
     () => new Set(),
@@ -266,6 +276,8 @@ export default function ProductionDayPage() {
         `/production/day?site_id=${siteId}&date=${date}`,
       );
 
+      setCalendar(data.calendar);
+
       if (!data.exists) {
         setDay(null);
         setProducts([]);
@@ -282,6 +294,7 @@ export default function ProductionDayPage() {
       setDirtyProductIds(new Set());
     } catch (err) {
       setDay(null);
+      setCalendar(null);
       setProducts([]);
 
       setError(
@@ -770,6 +783,8 @@ export default function ProductionDayPage() {
   }, [products]);
 
   const isEditable = day?.status === "in_progress";
+  const isConfiguredClosed =
+    calendar?.is_configured === true && calendar.is_open === false;
 
   if (loading) {
     return (
@@ -1188,53 +1203,115 @@ export default function ProductionDayPage() {
           JOURNÉE NON DÉMARRÉE
       ================================================================= */}
 
-      {!day && (
-        <div
-          style={{
-            padding: 32,
-            border: "1px solid #e2e8f0",
-            borderRadius: 12,
-            background: "white",
-            textAlign: "center",
-          }}
-        >
-          <h3
+      {!day &&
+        (isConfiguredClosed ? (
+          <div
             style={{
-              marginTop: 0,
-              marginBottom: 8,
+              padding: 32,
+              border: "1px solid #e2e8f0",
+              borderRadius: 12,
+              background: "white",
+              textAlign: "center",
             }}
           >
-            Production non démarrée
-          </h3>
+            <h3
+              style={{
+                marginTop: 0,
+                marginBottom: 8,
+              }}
+            >
+              Site fermé
+            </h3>
 
-          <p
-            style={{
-              marginTop: 0,
-              marginBottom: 20,
-              color: "#64748b",
-            }}
-          >
-            Aucune feuille de production n'existe encore pour cette date.
-          </p>
+            <p
+              style={{
+                marginTop: 0,
+                marginBottom: 8,
+                color: "#64748b",
+              }}
+            >
+              Le site est fermé à cette date selon son calendrier d’exploitation.
+            </p>
 
-          <button
-            type="button"
-            onClick={openProductionDay}
-            disabled={opening}
+            <p
+              style={{
+                marginTop: 0,
+                marginBottom: calendar.reason ? 8 : 20,
+                color: "#64748b",
+              }}
+            >
+              Aucune feuille de production n’est attendue pour cette date.
+            </p>
+
+            {calendar.reason && (
+              <p
+                style={{
+                  marginTop: 0,
+                  marginBottom: 20,
+                  color: "#475569",
+                }}
+              >
+                Raison : {calendar.reason}
+              </p>
+            )}
+
+            <p
+              style={{
+                margin: 0,
+                color: "#64748b",
+              }}
+            >
+              Pour ouvrir exceptionnellement le site, créez d’abord une exception
+              d’ouverture dans le calendrier du site.
+            </p>
+          </div>
+        ) : (
+          <div
             style={{
-              padding: "10px 16px",
-              border: 0,
-              borderRadius: 8,
-              cursor: opening ? "not-allowed" : "pointer",
-              background: "#0f172a",
-              color: "white",
-              fontWeight: 600,
+              padding: 32,
+              border: "1px solid #e2e8f0",
+              borderRadius: 12,
+              background: "white",
+              textAlign: "center",
             }}
           >
-            {opening ? "Démarrage..." : "Démarrer la production"}
-          </button>
-        </div>
-      )}
+            <h3
+              style={{
+                marginTop: 0,
+                marginBottom: 8,
+              }}
+            >
+              Production non démarrée
+            </h3>
+
+            <p
+              style={{
+                marginTop: 0,
+                marginBottom: 20,
+                color: "#64748b",
+              }}
+            >
+              Aucune feuille de production n'existe encore pour cette date.
+            </p>
+
+            <button
+              type="button"
+              onClick={openProductionDay}
+              disabled={opening}
+              style={{
+                padding: "10px 16px",
+                border: 0,
+                borderRadius: 8,
+                cursor: opening ? "not-allowed" : "pointer",
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+              }}
+            >
+              {opening ? "Démarrage..." : "Démarrer la production"}
+            </button>
+          </div>
+        ))}
 
       {/* ================================================================
           FEUILLE

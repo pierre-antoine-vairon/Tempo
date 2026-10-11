@@ -4,16 +4,25 @@ import { apiGet, apiPost } from "../../api";
 
 type ProductionStatus = "not_started" | "in_progress" | "finished" | "closed";
 
+type OperatingCalendar = {
+  is_configured: boolean;
+  is_open: boolean | null;
+  source: "unconfigured" | "weekly_rule" | "exception";
+  reason: string | null;
+};
+
 type OverviewDay = {
   date: string;
   status: ProductionStatus;
   production_day_id: number | null;
+  calendar: OperatingCalendar;
 };
 
 type OverviewAlert = {
   code: string;
   level: "info" | "warning";
   message: string;
+  dates?: string[];
 };
 
 type OverviewResponse = {
@@ -33,6 +42,7 @@ type OverviewResponse = {
     production_day_id: number | null;
     status: ProductionStatus;
     products_count: number;
+    calendar: OperatingCalendar;
   };
 
   week: OverviewDay[];
@@ -241,6 +251,11 @@ export default function ProductionHomePage() {
     );
   }
 
+  const todayIsConfiguredClosed =
+    !overview.today.exists &&
+    overview.today.calendar.is_configured &&
+    overview.today.calendar.is_open === false;
+
   return (
     <div style={{ padding: 24 }}>
       {/* ================================================================
@@ -344,7 +359,11 @@ export default function ProductionHomePage() {
                 {formatDate(overview.date)}
               </strong>
 
-              <StatusBadge status={overview.today.status} />
+              {todayIsConfiguredClosed ? (
+                <CalendarStatusBadge label="Fermé" />
+              ) : (
+                <StatusBadge status={overview.today.status} />
+              )}
             </div>
 
             <div
@@ -357,26 +376,28 @@ export default function ProductionHomePage() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => void startTodayProduction()}
-            disabled={startingToday}
-            style={{
-              padding: "11px 17px",
-              border: 0,
-              borderRadius: 8,
-              background: "#0f172a",
-              color: "white",
-              fontWeight: 600,
-              cursor: startingToday ? "not-allowed" : "pointer",
-            }}
-          >
-            {startingToday
-              ? "Démarrage..."
-              : overview.today.status === "not_started"
-                ? "Démarrer la production"
-                : "Ouvrir la production"}
-          </button>
+          {!todayIsConfiguredClosed && (
+            <button
+              type="button"
+              onClick={() => void startTodayProduction()}
+              disabled={startingToday}
+              style={{
+                padding: "11px 17px",
+                border: 0,
+                borderRadius: 8,
+                background: "#0f172a",
+                color: "white",
+                fontWeight: 600,
+                cursor: startingToday ? "not-allowed" : "pointer",
+              }}
+            >
+              {startingToday
+                ? "Démarrage..."
+                : overview.today.status === "not_started"
+                  ? "Démarrer la production"
+                  : "Ouvrir la production"}
+            </button>
+          )}
         </div>
       </section>
 
@@ -430,6 +451,16 @@ export default function ProductionHomePage() {
         >
           {overview.week.map((day) => {
             const isToday = day.date === overview.date;
+            const isConfiguredClosed =
+              day.production_day_id === null &&
+              day.calendar.is_configured &&
+              day.calendar.is_open === false;
+            const isMissingProductionDay =
+              day.production_day_id === null &&
+              !isConfiguredClosed &&
+              day.calendar.is_configured &&
+              day.calendar.is_open === true &&
+              day.date < overview.date;
 
             return (
               <button
@@ -469,7 +500,13 @@ export default function ProductionHomePage() {
                   {day.date.split("-")[2]}
                 </strong>
 
-                <StatusBadge status={day.status} compact />
+                {isConfiguredClosed ? (
+                  <CalendarStatusBadge label="Fermé" compact />
+                ) : isMissingProductionDay ? (
+                  <CalendarStatusBadge label="Journée manquante" compact warning />
+                ) : (
+                  <StatusBadge status={day.status} compact />
+                )}
               </button>
             );
           })}
@@ -622,6 +659,38 @@ function StatusBadge({
       }}
     >
       {getStatusLabel(status)}
+    </span>
+  );
+}
+
+function CalendarStatusBadge({
+  label,
+  compact = false,
+  warning = false,
+}: {
+  label: string;
+  compact?: boolean;
+  warning?: boolean;
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+
+        padding: compact ? "5px 8px" : "6px 10px",
+
+        borderRadius: 8,
+
+        background: warning ? "#fffbeb" : "#e2e8f0",
+
+        color: warning ? "#92400e" : "#475569",
+
+        fontSize: compact ? 12 : 13,
+
+        fontWeight: 600,
+      }}
+    >
+      {label}
     </span>
   );
 }
