@@ -522,6 +522,27 @@ class ProductionController extends Controller
             ], 404);
         }
 
+        try {
+            $resolvedCalendar = $this->siteOperatingCalendar->resolveDate(
+                $orgId,
+                $siteId,
+                $date
+            );
+        } catch (RuntimeException) {
+            return response()->json([
+                'error' => 'calendar_data_inconsistent',
+                'message' =>
+                'Les données du calendrier d’exploitation sont incohérentes.',
+            ], 500);
+        }
+
+        $calendar = [
+            'is_configured' => $resolvedCalendar['is_configured'],
+            'is_open' => $resolvedCalendar['is_open'],
+            'source' => $resolvedCalendar['source'],
+            'reason' => $resolvedCalendar['reason'],
+        ];
+
         /*
     |--------------------------------------------------------------------------
     | Recherche de la journée
@@ -550,6 +571,7 @@ class ProductionController extends Controller
                 'status' => 'not_started',
                 'products_count' => 0,
                 'products' => [],
+                'calendar' => $calendar,
             ]);
         }
 
@@ -717,24 +739,26 @@ class ProductionController extends Controller
                 ->count(),
 
             'products' => $products,
+
+            'calendar' => $calendar,
         ]);
     }
 
     public function updateDay(Request $request)
     {
         /*
-    |--------------------------------------------------------------------------
-    | Validation
-    |--------------------------------------------------------------------------
-    |
-    | IMPORTANT :
-    |
-    | stock_previous n'est volontairement PAS modifiable ici.
-    |
-    | Il est initialisé automatiquement par Tempo lors de
-    | l'ouverture de la journée.
-    |
-    */
+        |--------------------------------------------------------------------------
+        | Validation
+        |--------------------------------------------------------------------------
+        |
+        | IMPORTANT :
+        |
+        | stock_previous n'est volontairement PAS modifiable ici.
+        |
+        | Il est initialisé automatiquement par Tempo lors de
+        | l'ouverture de la journée.
+        |
+        */
 
         $validated = $request->validate([
             'site_id' => [
