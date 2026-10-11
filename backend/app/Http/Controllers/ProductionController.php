@@ -4867,6 +4867,32 @@ class ProductionController extends Controller
             ->copy()
             ->addDays(6);
 
+        try {
+            $calendarByDate = collect(
+                $this->siteOperatingCalendar->resolveDateRange(
+                    $orgId,
+                    $siteId,
+                    $weekStart->toDateString(),
+                    $weekEnd->toDateString()
+                )
+            )->mapWithKeys(function (array $calendar) {
+                return [
+                    $calendar['date'] => [
+                        'is_configured' => $calendar['is_configured'],
+                        'is_open' => $calendar['is_open'],
+                        'source' => $calendar['source'],
+                        'reason' => $calendar['reason'],
+                    ],
+                ];
+            });
+        } catch (RuntimeException) {
+            return response()->json([
+                'error' => 'calendar_data_inconsistent',
+                'message' =>
+                'Les données du calendrier d’exploitation sont incohérentes.',
+            ], 500);
+        }
+
         /*
         |--------------------------------------------------------------------------
         | Journées existantes de la semaine
@@ -4932,6 +4958,9 @@ class ProductionController extends Controller
                 $existingDay
                     ? (int) $existingDay->id
                     : null,
+
+                'calendar' =>
+                $calendarByDate->get($dayDate),
             ];
         }
 
@@ -4943,6 +4972,8 @@ class ProductionController extends Controller
 
         $today =
             $existingDays->get($date);
+
+        $todayCalendar = $calendarByDate->get($date);
 
         /*
         |--------------------------------------------------------------------------
@@ -5009,7 +5040,13 @@ class ProductionController extends Controller
         /*
          * Journée du jour non démarrée.
          */
-        if (!$today) {
+        if (
+            !$today
+            && !(
+                $todayCalendar['is_configured']
+                && $todayCalendar['is_open'] === false
+            )
+        ) {
             $alerts[] = [
                 'code' =>
                 'today_not_started',
@@ -5019,6 +5056,42 @@ class ProductionController extends Controller
 
                 'message' =>
                 'La production du jour n’est pas encore démarrée.',
+            ];
+        }
+
+        $missingProductionDates = collect($week)
+            ->filter(function (array $day) use ($date) {
+                return
+                    $day['date'] < $date
+                    && $day['production_day_id'] === null
+                    && $day['calendar']['is_configured']
+                    && $day['calendar']['is_open'] === true;
+            })
+            ->pluck('date')
+            ->values();
+
+        if ($missingProductionDates->count() > 0) {
+            $formattedDates = $missingProductionDates
+                ->map(function ($missingDate) {
+                    return \Illuminate\Support\Carbon::createFromFormat(
+                        'Y-m-d',
+                        $missingDate
+                    )->format('d/m/Y');
+                })
+                ->implode(', ');
+
+            $alerts[] = [
+                'code' => 'missing_production_days',
+                'level' => 'warning',
+                'dates' => $missingProductionDates->all(),
+                'message' => $missingProductionDates->count() === 1
+                    ? 'Une journée de production attendue est manquante : '
+                    . $formattedDates
+                    . '.'
+                    : $missingProductionDates->count()
+                    . ' journées de production attendues sont manquantes : '
+                    . $formattedDates
+                    . '.',
             ];
         }
 
@@ -5169,6 +5242,9 @@ class ProductionController extends Controller
                 $today
                     ? $todayProductsCount
                     : $activeProductsCount,
+
+                'calendar' =>
+                $todayCalendar,
             ],
 
             'week' =>
