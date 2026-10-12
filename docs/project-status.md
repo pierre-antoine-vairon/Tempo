@@ -1,6 +1,6 @@
 # Tempo — État du projet
 
-Dernière mise à jour : **27/08/2026**
+Dernière mise à jour : **12/10/2026**
 
 Ce document est le point de référence rapide pour savoir où en est Tempo aujourd'hui.
 
@@ -22,31 +22,33 @@ Backend / logique métier :
 - saisie partielle pendant `in_progress` ;
 - distinction `NULL` / `0` ;
 - confirmation avant remplacement des valeurs manquantes par `0` à la fin ;
-- Stock J-1 pour les produits dont la conservation le permet ;
-- aucun Stock J-1 pour les produits `J` ;
-- vérification / actualisation explicite du Stock J-1 ;
+- Stock précédent pour les produits dont la conservation le permet ;
+- lorsque le calendrier est configuré, stock précédent issu du dernier jour d'exploitation attendu ;
+- avant l'activation du calendrier, compatibilité historique avec le J-1 calendaire ;
+- aucun stock précédent pour les produits `J` ;
+- `stock_end = NULL` reste `stock_previous = NULL` ;
+- prévisualisation et actualisation explicites du stock précédent ;
 - catalogue Famille → Catégorie → Produit ;
 - activation, désactivation, création, modification et ordre ;
 - alertes sur les journées anciennes encore `in_progress`.
 
 Limites connues :
-- le Stock J-1 utilise encore la veille calendaire ;
-- Tempo ne connaît pas encore les jours d'ouverture / fermeture du site ;
-- un jour sans feuille est actuellement `À faire`, même si le site devrait être fermé ;
-- la continuité entre journées n'est pas encore imposée ;
+- la continuité de stock ne bloque pas la création de la journée courante ; si la journée d'exploitation précédente attendue est absente, encore en cours ou invalide, la feuille courante peut être créée mais aucun stock précédent n'est repris ;
 - pas encore de FIFO / âge du stock ;
 - pas encore d'alertes automatiques de fin de conservation ;
 - pas encore de recommandation automatique de production.
 
-## Prochaine brique : calendrier d'exploitation du site
+## Calendrier d'exploitation du site ✅
 
-Objectif : donner à Tempo une source de vérité sur les jours où un site fonctionne réellement.
+Tempo possède une source de vérité sur les jours où un site fonctionne réellement.
 
-V1 envisagée :
-- jours habituels ouverts / fermés ;
-- horaires commerciaux simples ;
-- ouverture exceptionnelle ;
-- fermeture exceptionnelle.
+Fonctionnalité livrée :
+- configuration hebdomadaire complète de 7 jours, versionnée par `effective_from` ;
+- configurations hebdomadaires append-only ;
+- ouvertures et fermetures exceptionnelles par date ;
+- priorité de résolution : exception, dernière configuration hebdomadaire applicable, puis calendrier non configuré ;
+- première `effective_from` comme frontière d'activation ;
+- avant cette frontière, comportement Production V1 conservé.
 
 Cas métier :
 
@@ -60,22 +62,20 @@ Jour ouvert + feuille existante
 Jour fermé + aucune feuille
 → normal, aucune production attendue
 
-Jour fermé + feuille ouverte
-→ ouverture exceptionnelle ou changement durable
+Jour fermé configuré + feuille historique existante
+→ feuille lisible avec son statut Production réel
 ```
 
-À terme, les changements durables devront pouvoir être datés pour ne pas réécrire l'historique.
+Une nouvelle feuille Production est refusée sur un jour configuré fermé. Une ouverture exceptionnelle doit d'abord être enregistrée dans le calendrier. Les horaires commerciaux restent hors V1.
 
 ## Suite prévue pour Production
 
-1. calendrier d'exploitation du site ;
-2. continuité des journées de production ;
-3. récupération du stock depuis la dernière journée d'exploitation pertinente ;
-4. suivi d'âge du stock / FIFO ;
-5. produits et quantités à surveiller en fin de conservation ;
-6. contrôles de cohérence de stock ;
-7. recommandations de production ;
-8. statistiques et optimisation.
+1. suivi d'âge du stock / FIFO ;
+2. produits et quantités à surveiller en fin de conservation ;
+3. contrôles de cohérence de stock ;
+4. inventaires ;
+5. recommandations de production ;
+6. statistiques et optimisation.
 
 ## Direction produit après les fondations Production
 

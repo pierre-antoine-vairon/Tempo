@@ -1,6 +1,6 @@
 # Tempo — Règles métier Production
 
-Dernière mise à jour : **27/08/2026**
+Dernière mise à jour : **12/10/2026**
 
 Ce document est la référence métier actuelle du module Production. Il décrit les règles validées en V1 et les prochaines règles métier déjà décidées ou en cours de conception.
 
@@ -20,7 +20,10 @@ Le module Production doit permettre à un site de suivre quotidiennement :
 
 ## 2. Cycle de vie d'une feuille
 
-Une journée inexistante est représentée fonctionnellement comme `not_started` → À faire.
+Lorsqu'aucune feuille n'existe, l'état Production technique reste `not_started`. Côté métier :
+
+- si le calendrier est non configuré ou si le jour est ouvert : la production est À faire ;
+- si le jour est configuré fermé : aucune production n'est attendue et l'interface présente le site comme fermé.
 
 Une journée créée peut avoir les statuts :
 - `in_progress` → En cours ;
@@ -115,25 +118,38 @@ stock_previous = NULL
 
 Les produits `J+1`, `J+2`, `J+3` peuvent être reportés selon les règles de continuité de stock.
 
-## 7. Stock J-1 — comportement V1 actuel
+## 7. Stock précédent — comportement actuel
 
-La V1 regarde encore la **veille calendaire exacte**.
+### Mode historique / calendrier non configuré
 
-Si cette veille possède une journée `finished` ou `closed` :
+Pour une date antérieure à l'activation du calendrier, Tempo conserve le comportement V1 : la veille calendaire est recherchée.
 
-```text
-stock_end veille → stock_previous aujourd'hui
-```
+### Mode calendrier d'exploitation
 
-Sinon `stock_previous = NULL`.
+Pour une date courante configurée, Tempo remonte jusqu'au premier jour d'exploitation attendu ouvert. Les jours fermés sont ignorés et les exceptions d'ouverture ou de fermeture sont respectées.
 
-Limite connue : cette logique est insuffisante lorsqu'un site est fermé un jour. Après ajout du calendrier d'exploitation, elle devra utiliser la dernière journée d'exploitation pertinente.
+Dès que ce premier jour ouvert attendu est trouvé :
 
-## 8. Vérification / actualisation explicite du Stock J-1
+- feuille absente → continuité indisponible, arrêt ;
+- feuille `in_progress` → continuité indisponible, arrêt ;
+- statut inattendu → continuité indisponible, arrêt ;
+- feuille `finished` ou `closed` → stock exploitable.
 
-Une feuille ouverte conserve un snapshot de son Stock J-1. Une modification ultérieure d'une journée précédente ne doit pas réécrire silencieusement une journée déjà ouverte.
+Tempo ne recherche jamais une journée plus ancienne lorsqu'une journée ouverte attendue pose problème. La nouvelle journée peut être créée, mais `stock_previous` reste `NULL` lorsque la continuité est indisponible.
 
-Tempo propose donc une vérification explicite puis, si nécessaire, une actualisation explicite du Stock J-1.
+La première `effective_from` constitue le début de cette continuité pilotée par calendrier. Si aucun jour ouvert précédent n'existe entre la date courante et cette frontière, `previous_date = NULL` et Tempo ne bascule pas vers une feuille antérieure à l'activation.
+
+Règles produits :
+
+- conservation `J` → `stock_previous = NULL` ;
+- `stock_end = NULL` → `stock_previous` reste `NULL` ;
+- produit absent de la feuille précédente → `stock_previous` suggéré à `NULL`.
+
+## 8. Vérification / actualisation explicite du stock précédent
+
+Une feuille ouverte conserve un snapshot de son stock précédent. Une modification ultérieure d'une journée précédente ne doit pas réécrire silencieusement une journée déjà ouverte.
+
+`openDay()`, `previewPreviousStock()` et `refreshPreviousStock()` utilisent la même résolution métier de la journée précédente attendue. Tempo propose une vérification explicite puis, si nécessaire, une actualisation explicite du stock précédent après action de l'utilisateur.
 
 ## 9. Composition historique d'une journée
 
@@ -182,11 +198,11 @@ Exemples : stock de fin à vérifier, ancienne journée encore `in_progress`, in
 
 Les warnings doivent être calculés lorsqu'ils peuvent être déduits de l'état réel, plutôt que stockés comme un état fixe.
 
-# V2 — règles métier déjà identifiées
+# Règles métier Production actuelles
 
 ## 13. Calendrier d'exploitation du site
 
-Tempo doit savoir si un site est censé être ouvert ou fermé à une date donnée.
+Tempo sait si un site est configuré ouvert ou fermé à une date donnée.
 
 ```text
 Jour ouvert + aucune feuille
@@ -198,43 +214,23 @@ Jour ouvert + feuille
 Jour fermé + aucune feuille
 → normal
 
-Jour fermé + feuille
-→ ouverture exceptionnelle ou changement durable
+Jour fermé + feuille existante
+→ feuille historique lisible avec son statut Production réel
 ```
 
-Un site possède des jours habituels d'ouverture / fermeture. Deux types d'exceptions doivent être possibles : ouverture exceptionnelle et fermeture exceptionnelle. Une exception datée gagne sur la règle habituelle.
+Une configuration hebdomadaire comporte exactement 7 jours et est versionnée par `effective_from`. Les configurations sont append-only. Une exception datée gagne sur la dernière règle hebdomadaire applicable. La première `effective_from` est la frontière d'activation ; avant cette date, Production conserve son comportement V1.
 
-Si un site change durablement de fonctionnement, cela ne doit pas être traité comme une suite d'exceptions. À terme, le planning habituel devra pouvoir avoir une date d'effet afin de préserver l'interprétation du passé.
+Un jour fermé configuré sans feuille est normal. Une nouvelle feuille est refusée sur un jour fermé ; une ouverture exceptionnelle doit être enregistrée dans le calendrier avant la création. Une feuille historique existante reste toujours lisible, même si le calendrier indique désormais fermé.
 
 ## 14. Continuité des journées
 
-Une nouvelle journée ne doit pas pouvoir être démarrée si une journée d'exploitation précédente pertinente est toujours `in_progress`.
+Une nouvelle journée peut être créée si la continuité est indisponible, mais aucun stock précédent n'est alors repris. Une journée ouverte attendue absente, `in_progress` ou portant un statut invalide interrompt la continuité ; Tempo ne la saute jamais pour rechercher une date plus ancienne.
 
-```text
-précédente pertinente = in_progress → blocage
-précédente pertinente = finished → autorisé
-précédente pertinente = closed → autorisé
-```
-
-`finished` suffit opérationnellement ; `closed` n'est pas obligatoire pour continuer.
-
-Un jour fermé sans feuille ne casse pas la chaîne.
-
-Un jour qui devait être ouvert mais qui n'a aucune feuille doit être traité comme une anomalie à résoudre (feuille manquante ou fermeture exceptionnelle) plutôt que sauté silencieusement.
+`finished` et `closed` sont exploitables pour le report de stock. Un jour fermé sans feuille ne casse pas la chaîne.
 
 ## 15. Dernière journée d'exploitation pertinente
 
-Après le calendrier du site, la logique de stock doit évoluer de :
-
-```text
-veille calendaire
-```
-
-vers :
-
-```text
-dernière journée d'exploitation pertinente et finalisée
-```
+La logique de stock utilise la dernière journée d'exploitation attendue et exploitable avant la date courante lorsque le calendrier est configuré. Sinon, elle conserve la veille calendaire historique.
 
 Exemple :
 

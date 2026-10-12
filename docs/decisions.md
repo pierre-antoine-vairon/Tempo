@@ -1,6 +1,6 @@
 # Tempo — Décisions structurantes
 
-Dernière mise à jour : **27/08/2026**
+Dernière mise à jour : **12/10/2026**
 
 Ce document résume les décisions encore valides. Les ADR conservent le détail historique.
 
@@ -90,21 +90,31 @@ Activation, désactivation et ordre concernent le catalogue courant et les futur
 
 Un produit `J` ne reporte jamais de stock : `stock_previous = NULL`.
 
-## Stock J-1 V1
+## Stock précédent
 
-La V1 utilise encore la veille calendaire exacte. Une journée ouverte ne doit jamais être réécrite silencieusement si la journée précédente change : vérification / actualisation explicite.
+Lorsque le calendrier n'est pas configuré pour la date courante, Tempo conserve le J-1 calendaire historique. Lorsqu'il est configuré, le stock précédent vient du dernier jour d'exploitation attendu avant la date courante.
 
-## Calendrier d'exploitation — prochaine fondation
+Une journée ouverte ne doit jamais être réécrite silencieusement si la journée précédente change : la vérification et l'actualisation du stock précédent restent explicites.
 
-Tempo doit distinguer jour ouvert / fermé, règle habituelle et exception datée. Une exception datée gagne sur la règle habituelle. Un changement durable doit à terme pouvoir avoir une date d'effet pour préserver l'historique.
+## Calendrier d'exploitation
 
-## Continuité — cible
+Le calendrier est composé de versions hebdomadaires complètes de 7 jours, datées par `effective_from` et append-only. Des exceptions datées permettent une ouverture ou une fermeture exceptionnelle.
 
-Une nouvelle journée ne doit pas démarrer si la journée d'exploitation précédente pertinente est encore `in_progress`. `finished` ou `closed` permettent de continuer. Un jour fermé sans feuille ne casse pas la chaîne. Un jour normalement ouvert sans feuille ne doit pas être sauté silencieusement : il faut résoudre l'anomalie ou enregistrer une fermeture exceptionnelle.
+La résolution suit cet ordre : exception datée, dernière règle hebdomadaire applicable, puis calendrier non configuré. La première `effective_from` est la frontière d'activation ; avant elle, Production conserve le comportement historique.
 
-## Stock entre journées — cible
+Une nouvelle feuille Production est refusée un jour configuré fermé. Une ouverture exceptionnelle doit être enregistrée dans le calendrier avant de créer la feuille. Une feuille historique existante reste lisible même si le calendrier indique fermé.
 
-Passer de la veille calendaire à la **dernière journée d'exploitation pertinente et finalisée**.
+## Continuité
+
+Une nouvelle journée peut être créée quand la continuité de stock est indisponible, mais aucun stock précédent n'est alors repris. Le premier jour d'exploitation ouvert attendu qui est absent, `in_progress` ou dans un statut invalide interrompt la continuité ; Tempo ne recherche pas une journée plus ancienne.
+
+`finished` et `closed` sont exploitables. Un jour fermé sans feuille ne casse pas la chaîne.
+
+## Stock entre journées
+
+La journée précédente est le dernier jour d'exploitation attendu et exploitable lorsque le calendrier est configuré. S'il n'existe aucun jour ouvert précédent entre la date courante et la frontière d'activation, aucun fallback historique n'est appliqué.
+
+Les produits `J` gardent `stock_previous = NULL`, et `stock_end = NULL` reste `stock_previous = NULL`.
 
 ## FIFO / âge — cible
 
