@@ -1194,23 +1194,30 @@ class ProductionController extends Controller
                     $siteId,
                     $date
                 );
+
+                if (
+                    $calendar['is_configured']
+                    && $calendar['is_open'] === false
+                ) {
+                    return response()->json([
+                        'error' => 'site_closed',
+                        'message' =>
+                        'Le site est fermé à cette date selon son calendrier d’exploitation.',
+                    ], 409);
+                }
+
+                $previousStockContinuity =
+                    $this->resolvePreviousProductionContinuity(
+                        $orgId,
+                        $siteId,
+                        $date
+                    );
             } catch (RuntimeException) {
                 return response()->json([
                     'error' => 'calendar_data_inconsistent',
                     'message' =>
                     'Les données du calendrier d’exploitation sont incohérentes.',
                 ], 500);
-            }
-
-            if (
-                $calendar['is_configured']
-                && $calendar['is_open'] === false
-            ) {
-                return response()->json([
-                    'error' => 'site_closed',
-                    'message' =>
-                    'Le site est fermé à cette date selon son calendrier d’exploitation.',
-                ], 409);
             }
 
             $now = now('UTC');
@@ -1339,22 +1346,27 @@ class ProductionController extends Controller
                     'created' => true,
                     'day' => $day,
                     'products_count' => 0,
+                    'previous_stock_continuity' => [
+                        'mode' => $previousStockContinuity['mode'],
+                        'outcome' => $previousStockContinuity['outcome'],
+                        'previous_date' =>
+                            $previousStockContinuity['previous_date'],
+                    ],
                 ], 201);
             }
 
             /*
         |--------------------------------------------------------------------------
-        | 5. Veille calendaire
+        | 5. Journée précédente pertinente
         |--------------------------------------------------------------------------
         */
 
             $previousDate =
-                \Illuminate\Support\Carbon::createFromFormat(
-                    'Y-m-d',
-                    $date
-                )
-                ->subDay()
-                ->toDateString();
+                $previousStockContinuity['previous_date'];
+
+            $canReusePreviousStock =
+                $previousStockContinuity['mode'] === 'legacy_calendar_day'
+                || $previousStockContinuity['outcome'] === 'available';
 
             $productIds = $products
                 ->pluck('product_id')
@@ -1368,47 +1380,59 @@ class ProductionController extends Controller
         |--------------------------------------------------------------------------
         */
 
-            $previousEntries = DB::table('y_production_entries as e')
+            $previousEntries = collect();
 
-                ->leftJoin(
-                    'y_production_day_products as dp',
-                    'dp.id',
-                    '=',
-                    'e.production_day_product_id'
-                )
+            if ($canReusePreviousStock) {
+                $previousEntriesQuery = DB::table('y_production_entries as e')
 
-                ->leftJoin(
-                    'y_production_days as d',
-                    'd.id',
-                    '=',
-                    'dp.production_day_id'
-                )
+                    ->leftJoin(
+                        'y_production_day_products as dp',
+                        'dp.id',
+                        '=',
+                        'e.production_day_product_id'
+                    )
 
-                ->where('e.org_id', $orgId)
-                ->where('e.site_id', $siteId)
+                    ->leftJoin(
+                        'y_production_days as d',
+                        'd.id',
+                        '=',
+                        'dp.production_day_id'
+                    )
 
-                ->whereIn(
-                    'e.product_id',
-                    $productIds
-                )
+                    ->where('e.org_id', $orgId)
+                    ->where('e.site_id', $siteId)
 
-                ->where(
-                    'e.production_date',
-                    $previousDate
-                )
+                    ->whereIn(
+                        'e.product_id',
+                        $productIds
+                    )
 
-                ->select([
-                    'e.product_id',
-                    'e.stock_end',
-                    'e.production_day_product_id',
+                    ->where(
+                        'e.production_date',
+                        $previousDate
+                    );
 
-                    'dp.is_included as was_included',
-                    'd.status as day_status',
-                ])
+                if ($previousStockContinuity['mode'] === 'operating_calendar') {
+                    $previousEntriesQuery->where(
+                        'dp.production_day_id',
+                        $previousStockContinuity['previous_day']->id
+                    );
+                }
 
-                ->get()
+                $previousEntries = $previousEntriesQuery
+                    ->select([
+                        'e.product_id',
+                        'e.stock_end',
+                        'e.production_day_product_id',
 
-                ->keyBy('product_id');
+                        'dp.is_included as was_included',
+                        'd.status as day_status',
+                    ])
+
+                    ->get()
+
+                    ->keyBy('product_id');
+            }
 
             /*
         |--------------------------------------------------------------------------
@@ -1450,6 +1474,8 @@ class ProductionController extends Controller
                     if ($previousEntry) {
 
                         $isLegacyEntry =
+                            $previousStockContinuity['mode'] === 'legacy_calendar_day'
+                            &&
                             $previousEntry
                             ->production_day_product_id
                             === null;
@@ -1663,6 +1689,12 @@ class ProductionController extends Controller
                 'day' => $day,
                 'products_count' =>
                 $products->count(),
+                'previous_stock_continuity' => [
+                    'mode' => $previousStockContinuity['mode'],
+                    'outcome' => $previousStockContinuity['outcome'],
+                    'previous_date' =>
+                        $previousStockContinuity['previous_date'],
+                ],
             ], 201);
         });
     }
@@ -2591,23 +2623,110 @@ class ProductionController extends Controller
 
         /*
     |--------------------------------------------------------------------------
-    | 2. Veille calendaire
+    | 2. Continuité du stock précédent
     |--------------------------------------------------------------------------
     */
 
-        $previousDate =
-            \Illuminate\Support\Carbon::createFromFormat(
-                'Y-m-d',
-                $date
-            )
-            ->subDay()
-            ->toDateString();
+        try {
+            $previousStockContinuity =
+                $this->resolvePreviousProductionContinuity(
+                    $orgId,
+                    $siteId,
+                    $date
+                );
+        } catch (RuntimeException) {
+            return response()->json([
+                'error' => 'calendar_data_inconsistent',
+                'message' =>
+                'Les données du calendrier d’exploitation sont incohérentes.',
+            ], 500);
+        }
 
-        $previousDay = DB::table('y_production_days')
-            ->where('org_id', $orgId)
-            ->where('site_id', $siteId)
-            ->where('production_date', $previousDate)
-            ->first();
+        $previousDate = $previousStockContinuity['previous_date'];
+
+        if (
+            $previousStockContinuity['mode'] === 'operating_calendar'
+            && $previousStockContinuity['outcome'] ===
+                'no_previous_expected_operating_day'
+        ) {
+            return response()->json([
+                'ok' => true,
+                'available' => false,
+                'reason' => 'no_previous_expected_operating_day',
+                'previous_date' => null,
+                'previous_day_status' => null,
+                'differences_count' => 0,
+                'differences' => [],
+                'message' =>
+                'Aucune journée d’exploitation précédente n’est définie dans le calendrier.',
+            ]);
+        }
+
+        if (
+            $previousStockContinuity['mode'] === 'operating_calendar'
+            && $previousStockContinuity['outcome'] ===
+                'previous_expected_day_missing'
+        ) {
+            return response()->json([
+                'ok' => true,
+                'available' => false,
+                'reason' => 'previous_expected_day_missing',
+                'previous_date' => $previousDate,
+                'previous_day_status' => null,
+                'differences_count' => 0,
+                'differences' => [],
+                'message' =>
+                'La feuille de production du dernier jour d’exploitation attendu est absente.',
+            ]);
+        }
+
+        if (
+            $previousStockContinuity['mode'] === 'operating_calendar'
+            && $previousStockContinuity['outcome'] ===
+                'previous_expected_day_not_final'
+        ) {
+            return response()->json([
+                'ok' => true,
+                'available' => false,
+                'reason' => 'previous_expected_day_not_final',
+                'previous_date' => $previousDate,
+                'previous_day_status' =>
+                    $previousStockContinuity['previous_day']->status,
+                'differences_count' => 0,
+                'differences' => [],
+                'message' =>
+                'La production du dernier jour d’exploitation attendu doit être terminée ou clôturée avant d’actualiser le stock précédent.',
+            ]);
+        }
+
+        if (
+            $previousStockContinuity['mode'] === 'operating_calendar'
+            && $previousStockContinuity['outcome'] ===
+                'previous_expected_day_invalid_status'
+        ) {
+            return response()->json([
+                'ok' => true,
+                'available' => false,
+                'reason' => 'previous_expected_day_invalid_status',
+                'previous_date' => $previousDate,
+                'previous_day_status' =>
+                    $previousStockContinuity['previous_day']->status,
+                'differences_count' => 0,
+                'differences' => [],
+                'message' =>
+                'Le statut de la journée de production précédente ne permet pas d’établir la continuité du stock.',
+            ]);
+        }
+
+        $previousDay = $previousStockContinuity['previous_day'];
+
+        if ($previousStockContinuity['mode'] === 'legacy_calendar_day') {
+            $previousDay = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where('production_date', $previousDate)
+                ->first();
+        }
 
         /*
     |--------------------------------------------------------------------------
@@ -2948,26 +3067,95 @@ class ProductionController extends Controller
 
             /*
         |--------------------------------------------------------------------------
-        | 2. Veille
+        | 2. Continuité du stock précédent
         |--------------------------------------------------------------------------
         */
 
-            $previousDate =
-                \Illuminate\Support\Carbon::createFromFormat(
-                    'Y-m-d',
-                    $date
-                )
-                ->subDay()
-                ->toDateString();
+            try {
+                $previousStockContinuity =
+                    $this->resolvePreviousProductionContinuity(
+                        $orgId,
+                        $siteId,
+                        $date
+                    );
+            } catch (RuntimeException) {
+                return response()->json([
+                    'error' => 'calendar_data_inconsistent',
+                    'message' =>
+                    'Les données du calendrier d’exploitation sont incohérentes.',
+                ], 500);
+            }
 
-            $previousDay = DB::table('y_production_days')
-                ->where('org_id', $orgId)
-                ->where('site_id', $siteId)
-                ->where(
-                    'production_date',
-                    $previousDate
-                )
-                ->first();
+            $previousDate = $previousStockContinuity['previous_date'];
+
+            if (
+                $previousStockContinuity['mode'] === 'operating_calendar'
+                && $previousStockContinuity['outcome'] ===
+                    'no_previous_expected_operating_day'
+            ) {
+                return response()->json([
+                    'error' => 'no_previous_expected_operating_day',
+                    'message' =>
+                    'Aucune journée d’exploitation précédente n’est définie dans le calendrier.',
+                    'previous_date' => null,
+                ], 409);
+            }
+
+            if (
+                $previousStockContinuity['mode'] === 'operating_calendar'
+                && $previousStockContinuity['outcome'] ===
+                    'previous_expected_day_missing'
+            ) {
+                return response()->json([
+                    'error' => 'previous_expected_production_day_missing',
+                    'message' =>
+                    'La feuille de production du dernier jour d’exploitation attendu est absente.',
+                    'previous_date' => $previousDate,
+                ], 409);
+            }
+
+            if (
+                $previousStockContinuity['mode'] === 'operating_calendar'
+                && $previousStockContinuity['outcome'] ===
+                    'previous_expected_day_not_final'
+            ) {
+                return response()->json([
+                    'error' => 'previous_expected_production_day_not_final',
+                    'message' =>
+                    'La production du dernier jour d’exploitation attendu doit être terminée ou clôturée avant d’actualiser le stock précédent.',
+                    'previous_date' => $previousDate,
+                    'status' =>
+                        $previousStockContinuity['previous_day']->status,
+                ], 409);
+            }
+
+            if (
+                $previousStockContinuity['mode'] === 'operating_calendar'
+                && $previousStockContinuity['outcome'] ===
+                    'previous_expected_day_invalid_status'
+            ) {
+                return response()->json([
+                    'error' => 'previous_expected_production_day_invalid_status',
+                    'message' =>
+                    'Le statut de la journée de production précédente ne permet pas d’établir la continuité du stock.',
+                    'previous_date' => $previousDate,
+                    'status' =>
+                        $previousStockContinuity['previous_day']->status,
+                ], 409);
+            }
+
+            $previousDay = $previousStockContinuity['previous_day'];
+
+            if ($previousStockContinuity['mode'] === 'legacy_calendar_day') {
+                $previousDay = DB::table('y_production_days')
+                    ->where('org_id', $orgId)
+                    ->where('site_id', $siteId)
+                    ->where(
+                        'production_date',
+                        $previousDate
+                    )
+                    ->first();
+            }
 
             if (!$previousDay) {
                 return response()->json([
@@ -5264,5 +5452,135 @@ class ProductionController extends Controller
             'alerts' =>
             $alerts,
         ]);
+    }
+
+    /**
+     * Resolve the production day that must provide the previous stock.
+     *
+     * @return array{
+     *     mode: 'legacy_calendar_day'|'operating_calendar',
+     *     previous_date: string|null,
+     *     outcome: 'legacy'|'available'|'previous_expected_day_missing'|'previous_expected_day_not_final'|'previous_expected_day_invalid_status'|'no_previous_expected_operating_day',
+     *     previous_day: object|null
+     * }
+     */
+    private function resolvePreviousProductionContinuity(
+        int $orgId,
+        int $siteId,
+        string $date
+    ): array {
+        $currentCalendar = $this->siteOperatingCalendar->resolveDate(
+            $orgId,
+            $siteId,
+            $date
+        );
+
+        if (!$currentCalendar['is_configured']) {
+            return [
+                'mode' => 'legacy_calendar_day',
+                'previous_date' =>
+                    \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $date)
+                        ->subDay()
+                        ->toDateString(),
+                'outcome' => 'legacy',
+                'previous_day' => null,
+            ];
+        }
+
+        $firstEffectiveFrom = $this->siteOperatingCalendar->getFirstEffectiveFrom(
+            $orgId,
+            $siteId
+        );
+
+        if ($firstEffectiveFrom === null) {
+            throw new RuntimeException(
+                'La première date d’effet du calendrier est introuvable.'
+            );
+        }
+
+        $previousDate = \Illuminate\Support\Carbon::createFromFormat(
+            'Y-m-d',
+            $date
+        )
+            ->subDay()
+            ->toDateString();
+
+        while ($previousDate >= $firstEffectiveFrom) {
+            $previousCalendar = $this->siteOperatingCalendar->resolveDate(
+                $orgId,
+                $siteId,
+                $previousDate
+            );
+
+            if (!$previousCalendar['is_configured']) {
+                throw new RuntimeException(
+                    'Le calendrier est incohérent après sa date d’activation.'
+                );
+            }
+
+            if ($previousCalendar['is_open'] === false) {
+                $previousDate = \Illuminate\Support\Carbon::createFromFormat(
+                    'Y-m-d',
+                    $previousDate
+                )
+                    ->subDay()
+                    ->toDateString();
+
+                continue;
+            }
+
+            if ($previousCalendar['is_open'] !== true) {
+                throw new RuntimeException(
+                    'Le calendrier ne permet pas de déterminer une ouverture.'
+                );
+            }
+
+            $previousDay = DB::table('y_production_days')
+                ->where('org_id', $orgId)
+                ->where('site_id', $siteId)
+                ->where('production_date', $previousDate)
+                ->first();
+
+            if (!$previousDay) {
+                return [
+                    'mode' => 'operating_calendar',
+                    'previous_date' => $previousDate,
+                    'outcome' => 'previous_expected_day_missing',
+                    'previous_day' => null,
+                ];
+            }
+
+            if ($previousDay->status === 'in_progress') {
+                return [
+                    'mode' => 'operating_calendar',
+                    'previous_date' => $previousDate,
+                    'outcome' => 'previous_expected_day_not_final',
+                    'previous_day' => $previousDay,
+                ];
+            }
+
+            if (in_array($previousDay->status, ['finished', 'closed'], true)) {
+                return [
+                    'mode' => 'operating_calendar',
+                    'previous_date' => $previousDate,
+                    'outcome' => 'available',
+                    'previous_day' => $previousDay,
+                ];
+            }
+
+            return [
+                'mode' => 'operating_calendar',
+                'previous_date' => $previousDate,
+                'outcome' => 'previous_expected_day_invalid_status',
+                'previous_day' => $previousDay,
+            ];
+        }
+
+        return [
+            'mode' => 'operating_calendar',
+            'previous_date' => null,
+            'outcome' => 'no_previous_expected_operating_day',
+            'previous_day' => null,
+        ];
     }
 }
