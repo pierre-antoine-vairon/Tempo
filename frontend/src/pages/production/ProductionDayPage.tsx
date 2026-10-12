@@ -181,8 +181,8 @@ type PreviousStockPreviewResponse = {
 
   reason?: string;
 
-  previous_date: string;
-  previous_day_status: ProductionStatus | null;
+  previous_date: string | null;
+  previous_day_status: string | null;
 
   differences_count: number;
   differences: PreviousStockDifference[];
@@ -657,7 +657,7 @@ export default function ProductionDayPage() {
      */
     if (dirtyProductIds.size > 0) {
       setError(
-        "Enregistrez d'abord les modifications en cours avant de vérifier le stock J-1.",
+        "Enregistrez d'abord les modifications en cours avant de vérifier le stock précédent.",
       );
 
       return;
@@ -674,7 +674,7 @@ export default function ProductionDayPage() {
       );
 
       /*
-       * Pas de veille exploitable.
+       * Pas de stock précédent exploitable.
        */
       if (!response.available) {
         setSavedMessage(response.message);
@@ -685,7 +685,7 @@ export default function ProductionDayPage() {
        * Tout est déjà correct.
        */
       if (response.differences_count === 0) {
-        setSavedMessage("Le stock J-1 est déjà à jour.");
+        setSavedMessage("Le stock précédent est déjà à jour.");
         return;
       }
 
@@ -698,7 +698,7 @@ export default function ProductionDayPage() {
       setError(
         err instanceof Error
           ? err.message
-          : "Impossible de vérifier le stock J-1.",
+          : "Impossible de vérifier le stock précédent.",
       );
     } finally {
       setCheckingPreviousStock(false);
@@ -728,18 +728,22 @@ export default function ProductionDayPage() {
 
       setPreviousStockPreview(null);
 
-      setSavedMessage(response.message);
+      setSavedMessage(
+        response.updated_entries === 0
+          ? "Le stock précédent est déjà à jour."
+          : `Stock précédent actualisé pour ${response.updated_entries} produit(s).`,
+      );
 
       /*
        * On recharge pour afficher immédiatement
-       * les nouvelles valeurs Stock J-1.
+       * les nouvelles valeurs de stock précédent.
        */
       await loadProduction();
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Impossible d'actualiser le stock J-1.",
+          : "Impossible d'actualiser le stock précédent.",
       );
     } finally {
       setRefreshingPreviousStock(false);
@@ -889,7 +893,9 @@ export default function ProductionDayPage() {
                 fontWeight: 600,
               }}
             >
-              {checkingPreviousStock ? "Vérification..." : "Vérifier stock J-1"}
+              {checkingPreviousStock
+                ? "Vérification..."
+                : "Vérifier le stock précédent"}
             </button>
           )}
 
@@ -1102,7 +1108,7 @@ export default function ProductionDayPage() {
             borderRadius: 10,
           }}
         >
-          <strong>Stock J-1 à actualiser</strong>
+          <strong>Stock précédent à actualiser</strong>
 
           <p
             style={{
@@ -1193,7 +1199,7 @@ export default function ProductionDayPage() {
             >
               {refreshingPreviousStock
                 ? "Actualisation..."
-                : "Actualiser le stock J-1"}
+                : "Actualiser le stock précédent"}
             </button>
           </div>
         </div>
@@ -1430,7 +1436,7 @@ export default function ProductionDayPage() {
 
                                 <th style={headerCellStyle}>Conservation</th>
 
-                                <th style={headerCellStyle}>Stock J-1</th>
+                                <th style={headerCellStyle}>Stock précédent</th>
 
                                 <th style={headerCellStyle}>Production</th>
 
@@ -1455,7 +1461,7 @@ export default function ProductionDayPage() {
                                     {product.conservation ?? "—"}
                                   </td>
 
-                                  {/* Stock J-1 :
+                                  {/* Stock précédent :
                                         toujours calculé par le backend */}
 
                                   <ProductionInput
