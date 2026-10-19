@@ -14,6 +14,7 @@ import CoveragePage from "./pages/CoveragePage";
 import PurchasingSuppliersPage from "./pages/purchasing/PurchasingSuppliersPage";
 import PurchasingMaterialsPage from "./pages/purchasing/PurchasingMaterialsPage";
 import PurchasingSupplierDetailPage from "./pages/purchasing/PurchasingSupplierDetailPage";
+import SupplierItemDetailPage from "./pages/purchasing/SupplierItemDetailPage";
 
 import ProductionHomePage from "./pages/production/ProductionHomePage";
 import ProductionDayPage from "./pages/production/ProductionDayPage";
@@ -44,6 +45,10 @@ export default function App() {
           <Route
             path="/purchasing/suppliers/:supplierId"
             element={<PurchasingSupplierDetailPage />}
+          />
+          <Route
+            path="/purchasing/supplier-items/:itemId"
+            element={<SupplierItemDetailPage />}
           />
 
           {/* ============================================================

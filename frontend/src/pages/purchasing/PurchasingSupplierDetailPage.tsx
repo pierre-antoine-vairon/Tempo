@@ -420,8 +420,8 @@ export default function PurchasingSupplierDetailPage() {
             <div style={{ marginTop: 22 }}>
               {items.length === 0 ? <EmptyState>Aucun article enregistré.</EmptyState> : (
                 <div style={{ overflowX: "auto" }}>
-                  <table style={{ ...tableStyle, minWidth: 1120 }}>
-                    <thead><tr><th style={headerCellStyle}>Référence fournisseur</th><th style={headerCellStyle}>Nom</th><th style={headerCellStyle}>Marque</th><th style={headerCellStyle}>Catégorie</th><th style={headerCellStyle}>Conditionnement</th><th style={headerCellStyle}>Matière Tempo</th><th style={headerCellStyle}>Quantité de référence</th><th style={headerCellStyle}>Statut</th></tr></thead>
+                  <table style={{ ...tableStyle, minWidth: 1200 }}>
+                    <thead><tr><th style={headerCellStyle}>Référence fournisseur</th><th style={headerCellStyle}>Nom</th><th style={headerCellStyle}>Marque</th><th style={headerCellStyle}>Catégorie</th><th style={headerCellStyle}>Conditionnement</th><th style={headerCellStyle}>Matière Tempo</th><th style={headerCellStyle}>Quantité de référence</th><th style={headerCellStyle}>Statut</th><th style={headerCellStyle}>Action</th></tr></thead>
                     <tbody>{items.map((item) => (
                       <tr key={item.id}>
                         <td style={cellStyle}>{item.supplier_sku ?? "—"}</td>
@@ -432,6 +432,11 @@ export default function PurchasingSupplierDetailPage() {
                         <td style={cellStyle}>{item.material?.name ?? <span style={{ color: "#a16207", fontWeight: 600 }}>Non rapprochée</span>}</td>
                         <td style={cellStyle}>{item.quantity_in_reference_unit === null || item.material === null ? "—" : `${formatReferenceQuantity(item.quantity_in_reference_unit)} ${item.material.reference_measure_unit.symbol}`}</td>
                         <td style={cellStyle}><StatusLabel isActive={item.is_active} /></td>
+                        <td style={cellStyle}>
+                          <Link to={`/purchasing/supplier-items/${item.id}`} style={openLinkStyle}>
+                            Ouvrir
+                          </Link>
+                        </td>
                       </tr>
                     ))}</tbody>
                   </table>
@@ -458,6 +463,7 @@ const itemFormGridStyle: React.CSSProperties = { display: "grid", gridTemplateCo
 const labelStyle: React.CSSProperties = { display: "grid", gap: 5, color: "#475569", fontSize: 13 };
 const inputStyle: React.CSSProperties = { width: "100%", padding: "9px 10px", border: "1px solid #cbd5e1", borderRadius: 8, background: "white" };
 const primaryButtonStyle: React.CSSProperties = { padding: "9px 14px", border: 0, borderRadius: 8, background: "#0f172a", color: "white", fontWeight: 600, cursor: "pointer" };
+const openLinkStyle: React.CSSProperties = { color: "#2563eb", fontWeight: 600, textDecoration: "none" };
 const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", minWidth: 680 };
 const headerCellStyle: React.CSSProperties = { textAlign: "left", padding: 10, borderBottom: "1px solid #cbd5e1", color: "#475569", fontSize: 13, verticalAlign: "bottom" };
 const cellStyle: React.CSSProperties = { padding: 10, borderBottom: "1px solid #e2e8f0", verticalAlign: "top" };
