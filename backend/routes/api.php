@@ -3,6 +3,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProductionController;
+use App\Http\Controllers\PurchasingReferenceController;
 use App\Http\Controllers\SiteOperatingCalendarController;
 
 Route::get('/health', function () {
@@ -30,6 +31,18 @@ Route::prefix('sites/{siteId}/operating-calendar')
         Route::post('/weekly-rules', 'createWeeklyConfiguration');
         Route::put('/exceptions/{date}', 'upsertException');
         Route::delete('/exceptions/{date}', 'deleteException');
+    });
+
+Route::prefix('purchasing')
+    ->controller(PurchasingReferenceController::class)
+    ->group(function () {
+        Route::get('/measure-units', 'measureUnits');
+
+        Route::get('/suppliers', 'suppliers');
+        Route::post('/suppliers', 'createSupplier');
+
+        Route::get('/materials', 'materials');
+        Route::post('/materials', 'createMaterial');
     });
 
 // NOTE MVP:
