@@ -85,6 +85,15 @@ export default function DashboardLayout() {
           >
             Production
           </NavLink>
+          <NavLink
+            to="/purchasing"
+            style={({ isActive }) => ({
+              ...linkStyle,
+              background: isActive ? "#f2f2f2" : "transparent",
+            })}
+          >
+            Achats & Matières
+          </NavLink>
         </nav>
       </aside>
 

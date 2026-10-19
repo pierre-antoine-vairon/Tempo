@@ -11,6 +11,9 @@ import RostersPage from "./pages/RostersPage";
 import RosterDetailPage from "./pages/RosterDetailPage";
 import PlanningPage from "./pages/PlanningPage";
 import CoveragePage from "./pages/CoveragePage";
+import PurchasingSuppliersPage from "./pages/purchasing/PurchasingSuppliersPage";
+import PurchasingMaterialsPage from "./pages/purchasing/PurchasingMaterialsPage";
+import PurchasingSupplierDetailPage from "./pages/purchasing/PurchasingSupplierDetailPage";
 
 import ProductionHomePage from "./pages/production/ProductionHomePage";
 import ProductionDayPage from "./pages/production/ProductionDayPage";
@@ -33,6 +36,15 @@ export default function App() {
           <Route path="/rosters/:id" element={<RosterDetailPage />} />
           <Route path="/planning" element={<PlanningPage />} />
           <Route path="/coverage" element={<CoveragePage />} />
+          <Route path="/purchasing" element={<PurchasingSuppliersPage />} />
+          <Route
+            path="/purchasing/materials"
+            element={<PurchasingMaterialsPage />}
+          />
+          <Route
+            path="/purchasing/suppliers/:supplierId"
+            element={<PurchasingSupplierDetailPage />}
+          />
 
           {/* ============================================================
               SECTION PRODUCTION
