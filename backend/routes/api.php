@@ -3,6 +3,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProductionController;
+use App\Http\Controllers\ProductRecipeController;
 use App\Http\Controllers\PurchasingReferenceController;
 use App\Http\Controllers\SiteOperatingCalendarController;
 use App\Http\Controllers\SupplierCatalogController;
@@ -128,6 +129,16 @@ Route::prefix('production')
         Route::post('/day/reopen', 'reopenDay');
     }
 );
+
+Route::prefix('production/products/{productId}')
+    ->whereNumber(['productId', 'recipeId'])
+    ->controller(ProductRecipeController::class)
+    ->group(function () {
+        Route::get('/recipes', 'recipes');
+        Route::get('/recipes/{recipeId}', 'show');
+        Route::get('/recipe-at-date', 'recipeAtDate');
+        Route::post('/recipes', 'create');
+    });
 
 Route::prefix('rosters')->group(function () {
     Route::get('/', function (Request $request) {
