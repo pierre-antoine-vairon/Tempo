@@ -5,6 +5,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\ProductionController;
 use App\Http\Controllers\PurchasingReferenceController;
 use App\Http\Controllers\SiteOperatingCalendarController;
+use App\Http\Controllers\SupplierCatalogController;
+use App\Http\Controllers\SupplierItemController;
 
 Route::get('/health', function () {
     DB::selectOne('SELECT 1 as ok');
@@ -43,6 +45,31 @@ Route::prefix('purchasing')
 
         Route::get('/materials', 'materials');
         Route::post('/materials', 'createMaterial');
+    });
+
+Route::prefix('purchasing')
+    ->whereNumber('supplierId')
+    ->controller(SupplierCatalogController::class)
+    ->group(function () {
+        Route::get('/suppliers/{supplierId}/categories', 'categories');
+        Route::post('/suppliers/{supplierId}/categories', 'createCategory');
+
+        Route::get('/suppliers/{supplierId}/catalogs', 'catalogs');
+        Route::post('/suppliers/{supplierId}/catalogs', 'createCatalog');
+    });
+
+Route::prefix('purchasing')
+    ->whereNumber(['supplierId', 'itemId'])
+    ->controller(SupplierItemController::class)
+    ->group(function () {
+        Route::get('/suppliers/{supplierId}/items', 'items');
+        Route::post('/suppliers/{supplierId}/items', 'createItem');
+
+        Route::get('/supplier-items/{itemId}', 'showItem');
+        Route::patch('/supplier-items/{itemId}/material-link', 'linkMaterial');
+
+        Route::get('/supplier-items/{itemId}/prices', 'prices');
+        Route::post('/supplier-items/{itemId}/prices', 'createPrice');
     });
 
 // NOTE MVP:
