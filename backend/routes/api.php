@@ -138,6 +138,8 @@ Route::prefix('production/products/{productId}')
         Route::get('/recipes/{recipeId}', 'show');
         Route::get('/recipe-at-date', 'recipeAtDate');
         Route::post('/recipes', 'create');
+        Route::patch('/recipes/{recipeId}/correction', 'correct');
+        Route::get('/recipes/{recipeId}/corrections', 'corrections');
     });
 
 Route::prefix('rosters')->group(function () {

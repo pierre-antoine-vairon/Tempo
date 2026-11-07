@@ -158,48 +158,10 @@ class ProductRecipeController extends Controller
             ], 422);
         }
 
-        $lines = [];
-        $materialIds = [];
+        $lines = $this->validateRecipeLines($validated['lines'], $orgId);
 
-        foreach ($validated['lines'] as $line) {
-            $materialId = (int) $line['material_id'];
-
-            if (array_key_exists($materialId, $materialIds)) {
-                return response()->json([
-                    'ok' => false,
-                    'error' => 'duplicate_material',
-                    'message' => 'Une matière ne peut apparaître qu’une seule fois dans une fiche technique.',
-                ], 422);
-            }
-
-            $quantity = $line['quantity_in_reference_unit'];
-
-            if (!$this->isPositiveRecipeQuantity($quantity)) {
-                return response()->json([
-                    'ok' => false,
-                    'error' => 'invalid_quantity_in_reference_unit',
-                    'message' => 'La quantité doit être une chaîne décimale strictement positive, avec au plus huit chiffres entiers et six décimales.',
-                ], 422);
-            }
-
-            $materialIds[$materialId] = true;
-            $lines[] = [
-                'material_id' => $materialId,
-                'quantity_in_reference_unit' => $quantity,
-            ];
-        }
-
-        $existingMaterialsCount = DB::table('y_materials')
-            ->where('org_id', $orgId)
-            ->whereIn('id', array_keys($materialIds))
-            ->count();
-
-        if ($existingMaterialsCount !== count($materialIds)) {
-            return response()->json([
-                'ok' => false,
-                'error' => 'material_not_found',
-                'message' => 'Une ou plusieurs matières sont introuvables pour cette organisation.',
-            ], 422);
+        if ($lines instanceof JsonResponse) {
+            return $lines;
         }
 
         try {
@@ -312,6 +274,230 @@ class ProductRecipeController extends Controller
         ], 201);
     }
 
+    public function correct(
+        Request $request,
+        int $productId,
+        int $recipeId
+    ): JsonResponse {
+        $orgId = $this->orgId($request);
+
+        if (!$this->organizationExists($orgId)) {
+            return $this->organizationNotFoundResponse();
+        }
+
+        $product = $this->findScopedProduct($orgId, $productId);
+
+        if (!$product) {
+            return $this->productNotFoundResponse();
+        }
+
+        $validated = $request->validate([
+            'correction_reason' => ['nullable', 'string', 'max:500'],
+            'lines' => ['required', 'array', 'min:1'],
+            'lines.*.material_id' => ['required', 'integer', 'min:1'],
+            'lines.*.quantity_in_reference_unit' => ['required', 'string'],
+        ]);
+
+        $correctionReason = trim($validated['correction_reason'] ?? '');
+
+        if ($correctionReason === '') {
+            return response()->json([
+                'ok' => false,
+                'error' => 'correction_reason_empty',
+                'message' => 'Le motif de correction est obligatoire.',
+            ], 422);
+        }
+
+        $lines = $this->validateRecipeLines($validated['lines'], $orgId);
+
+        if ($lines instanceof JsonResponse) {
+            return $lines;
+        }
+
+        $correction = DB::transaction(function () use (
+            $orgId,
+            $productId,
+            $recipeId,
+            $correctionReason,
+            $lines
+        ) {
+            // The product lock serializes corrections with append-only recipe creation.
+            $lockedProduct = $this->findScopedProduct($orgId, $productId, true);
+
+            if (!$lockedProduct) {
+                return ['status' => 'product_not_found'];
+            }
+
+            $recipe = $this->findScopedRecipe(
+                $orgId,
+                $lockedProduct,
+                $recipeId,
+                true
+            );
+
+            if (!$recipe) {
+                return ['status' => 'recipe_not_found'];
+            }
+
+            $latestRecipe = DB::table('y_product_recipes')
+                ->where('org_id', $orgId)
+                ->where('site_id', (int) $lockedProduct->site_id)
+                ->where('product_id', $productId)
+                ->orderByDesc('effective_from')
+                ->orderByDesc('id')
+                ->first();
+
+            if ((int) $latestRecipe->id !== $recipeId) {
+                return ['status' => 'not_latest'];
+            }
+
+            $beforeLines = $this->recipeLineSnapshots($recipe);
+            $now = now('UTC');
+
+            DB::table('y_product_recipe_lines')
+                ->where('recipe_id', $recipeId)
+                ->where('org_id', $orgId)
+                ->where('site_id', (int) $lockedProduct->site_id)
+                ->delete();
+
+            $lineRows = array_map(
+                fn (array $line) => [
+                    'org_id' => $orgId,
+                    'site_id' => (int) $lockedProduct->site_id,
+                    'recipe_id' => $recipeId,
+                    'material_id' => $line['material_id'],
+                    'quantity_in_reference_unit' => $line['quantity_in_reference_unit'],
+                    'created_by' => null,
+                    'created_at' => $now,
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ],
+                $lines
+            );
+
+            DB::table('y_product_recipe_lines')->insert($lineRows);
+
+            $afterLines = $this->recipeLineSnapshots($recipe);
+
+            DB::table('y_product_recipes')
+                ->where('id', $recipeId)
+                ->where('org_id', $orgId)
+                ->where('site_id', (int) $lockedProduct->site_id)
+                ->where('product_id', $productId)
+                ->update([
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
+
+            $correctionId = DB::table('y_product_recipe_corrections')->insertGetId([
+                'org_id' => $orgId,
+                'site_id' => (int) $lockedProduct->site_id,
+                'recipe_id' => $recipeId,
+                'correction_reason' => $correctionReason,
+                'before_lines_json' => json_encode($beforeLines),
+                'after_lines_json' => json_encode($afterLines),
+                'corrected_by' => null,
+                'corrected_at' => $now,
+            ]);
+
+            return [
+                'status' => 'corrected',
+                'product' => $lockedProduct,
+                'recipe_id' => $recipeId,
+                'correction' => [
+                    'id' => (int) $correctionId,
+                    'reason' => $correctionReason,
+                    'corrected_at' => $now->toDateTimeString(),
+                ],
+            ];
+        });
+
+        if ($correction['status'] === 'product_not_found') {
+            return $this->productNotFoundResponse();
+        }
+
+        if ($correction['status'] === 'recipe_not_found') {
+            return $this->recipeNotFoundResponse();
+        }
+
+        if ($correction['status'] === 'not_latest') {
+            return response()->json([
+                'ok' => false,
+                'error' => 'recipe_correction_not_latest',
+                'message' => 'Seule la dernière version de la fiche technique peut être corrigée.',
+            ], 409);
+        }
+
+        $recipe = $this->findScopedRecipe(
+            $orgId,
+            $correction['product'],
+            $correction['recipe_id']
+        );
+
+        return response()->json([
+            'ok' => true,
+            'recipe' => $this->recipeResponse($recipe, $correction['product']),
+            'correction' => $correction['correction'],
+            'message' => 'Fiche technique corrigée.',
+        ]);
+    }
+
+    public function corrections(
+        Request $request,
+        int $productId,
+        int $recipeId
+    ): JsonResponse {
+        $orgId = $this->orgId($request);
+
+        if (!$this->organizationExists($orgId)) {
+            return $this->organizationNotFoundResponse();
+        }
+
+        $product = $this->findScopedProduct($orgId, $productId);
+
+        if (!$product) {
+            return $this->productNotFoundResponse();
+        }
+
+        $recipe = $this->findScopedRecipe($orgId, $product, $recipeId);
+
+        if (!$recipe) {
+            return $this->recipeNotFoundResponse();
+        }
+
+        $corrections = DB::table('y_product_recipe_corrections')
+            ->where('org_id', $orgId)
+            ->where('site_id', (int) $product->site_id)
+            ->where('recipe_id', $recipeId)
+            ->orderByDesc('corrected_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn ($correction) => [
+                'id' => (int) $correction->id,
+                'reason' => $correction->correction_reason,
+                'before_lines' => json_decode(
+                    $correction->before_lines_json,
+                    true,
+                    512,
+                    JSON_THROW_ON_ERROR
+                ),
+                'after_lines' => json_decode(
+                    $correction->after_lines_json,
+                    true,
+                    512,
+                    JSON_THROW_ON_ERROR
+                ),
+                'corrected_at' => $correction->corrected_at,
+            ])
+            ->values();
+
+        return response()->json([
+            'ok' => true,
+            'recipe_id' => $recipeId,
+            'corrections' => $corrections,
+        ]);
+    }
+
     private function findScopedProduct(
         int $orgId,
         int $productId,
@@ -332,14 +518,94 @@ class ProductRecipeController extends Controller
     private function findScopedRecipe(
         int $orgId,
         object $product,
-        int $recipeId
+        int $recipeId,
+        bool $lockForUpdate = false
     ): ?object {
-        return DB::table('y_product_recipes')
+        $query = DB::table('y_product_recipes')
             ->where('id', $recipeId)
             ->where('org_id', $orgId)
             ->where('site_id', (int) $product->site_id)
-            ->where('product_id', (int) $product->id)
-            ->first();
+            ->where('product_id', (int) $product->id);
+
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        return $query->first();
+    }
+
+    /**
+     * @param array<int, array{material_id: int, quantity_in_reference_unit: string}> $lines
+     * @return array<int, array{material_id: int, quantity_in_reference_unit: string}>|JsonResponse
+     */
+    private function validateRecipeLines(array $lines, int $orgId): array|JsonResponse
+    {
+        $validatedLines = [];
+        $materialIds = [];
+
+        foreach ($lines as $line) {
+            $materialId = (int) $line['material_id'];
+
+            if (array_key_exists($materialId, $materialIds)) {
+                return response()->json([
+                    'ok' => false,
+                    'error' => 'duplicate_material',
+                    'message' => 'Une matière ne peut apparaître qu’une seule fois dans une fiche technique.',
+                ], 422);
+            }
+
+            $quantity = $line['quantity_in_reference_unit'];
+
+            if (!$this->isPositiveRecipeQuantity($quantity)) {
+                return response()->json([
+                    'ok' => false,
+                    'error' => 'invalid_quantity_in_reference_unit',
+                    'message' => 'La quantité doit être une chaîne décimale strictement positive, avec au plus huit chiffres entiers et six décimales.',
+                ], 422);
+            }
+
+            $materialIds[$materialId] = true;
+            $validatedLines[] = [
+                'material_id' => $materialId,
+                'quantity_in_reference_unit' => $quantity,
+            ];
+        }
+
+        $existingMaterialsCount = DB::table('y_materials')
+            ->where('org_id', $orgId)
+            ->whereIn('id', array_keys($materialIds))
+            ->count();
+
+        if ($existingMaterialsCount !== count($materialIds)) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'material_not_found',
+                'message' => 'Une ou plusieurs matières sont introuvables pour cette organisation.',
+            ], 422);
+        }
+
+        return $validatedLines;
+    }
+
+    /**
+     * @return array<int, array{material_id: int, quantity_in_reference_unit: string}>
+     */
+    private function recipeLineSnapshots(object $recipe): array
+    {
+        $lines = DB::table('y_product_recipe_lines')
+            ->where('recipe_id', (int) $recipe->id)
+            ->where('org_id', (int) $recipe->org_id)
+            ->where('site_id', (int) $recipe->site_id)
+            ->select(['material_id', 'quantity_in_reference_unit'])
+            ->orderBy('material_id')
+            ->get()
+            ->map(fn ($line) => [
+                'material_id' => (int) $line->material_id,
+                'quantity_in_reference_unit' => (string) $line->quantity_in_reference_unit,
+            ])
+            ->all();
+
+        return $lines;
     }
 
     /**
