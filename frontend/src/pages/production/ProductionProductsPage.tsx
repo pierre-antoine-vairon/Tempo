@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { apiGet, apiPut, apiPost } from "../../api";
 
 type ProductFamily = {
@@ -1310,7 +1311,7 @@ export default function ProductionProductsPage() {
                         display: "grid",
 
                         gridTemplateColumns:
-                          "80px minmax(220px, 1fr) 120px 120px 110px 140px",
+                          "80px minmax(180px, 1fr) 100px 110px 140px 110px 140px",
                         gap: 18,
                         alignItems: "center",
 
@@ -1415,6 +1416,19 @@ export default function ProductionProductsPage() {
                         >
                           {product.is_active ? "Actif" : "Inactif"}
                         </span>
+                      </div>
+
+                      <div>
+                        <Link
+                          to={`/production/products/${product.id}/recipe`}
+                          style={{
+                            color: "#2563eb",
+                            fontWeight: 600,
+                            textDecoration: "none",
+                          }}
+                        >
+                          Fiche technique
+                        </Link>
                       </div>
 
                       <div>

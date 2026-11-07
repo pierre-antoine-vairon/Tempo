@@ -20,6 +20,7 @@ import ProductionHomePage from "./pages/production/ProductionHomePage";
 import ProductionDayPage from "./pages/production/ProductionDayPage";
 import ProductionHistoryPage from "./pages/production/ProductionHistoryPage";
 import ProductionProductsPage from "./pages/production/ProductionProductsPage";
+import ProductionProductRecipePage from "./pages/production/ProductionProductRecipePage";
 
 export default function App() {
   return (
@@ -63,6 +64,10 @@ export default function App() {
             <Route path="history" element={<ProductionHistoryPage />} />
 
             <Route path="products" element={<ProductionProductsPage />} />
+            <Route
+              path="products/:productId/recipe"
+              element={<ProductionProductRecipePage />}
+            />
           </Route>
         </Route>
       </Routes>
