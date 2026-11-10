@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiGet, apiPost } from "../../api";
+import { apiGet, apiPatch, apiPost } from "../../api";
 
 const ORG_ID = 1;
 
@@ -79,6 +79,11 @@ type CreateRecipeResponse = {
   message: string;
 };
 
+type CorrectRecipeResponse = {
+  ok: true;
+  message: string;
+};
+
 type RecipeFormLine = {
   materialId: number | null;
   quantity: string;
@@ -147,12 +152,20 @@ export default function ProductionProductRecipePage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [referenceDate, setReferenceDate] = useState("");
   const [showVersionForm, setShowVersionForm] = useState(false);
-  const [formLoading, setFormLoading] = useState(false);
+  const [formLoadingAction, setFormLoadingAction] = useState<
+    "version" | "correction" | null
+  >(null);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [effectiveFrom, setEffectiveFrom] = useState("");
   const [formLines, setFormLines] = useState<RecipeFormLine[]>([]);
+  const [showCorrectionForm, setShowCorrectionForm] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionMaterials, setCorrectionMaterials] = useState<Material[]>([]);
+  const [correctionLines, setCorrectionLines] = useState<RecipeFormLine[]>([]);
 
   const loadRecipe = useCallback(async () => {
     if (!validProductId) {
@@ -210,7 +223,8 @@ export default function ProductionProductRecipePage() {
     }
 
     try {
-      setFormLoading(true);
+      cancelCorrectionForm();
+      setFormLoadingAction("version");
       setFormError(null);
       setSuccessMessage(null);
 
@@ -237,7 +251,7 @@ export default function ProductionProductRecipePage() {
           : "Impossible de préparer la nouvelle version.",
       );
     } finally {
-      setFormLoading(false);
+      setFormLoadingAction(null);
     }
   }
 
@@ -249,8 +263,63 @@ export default function ProductionProductRecipePage() {
     setFormLines([]);
   }
 
+  async function openCorrectionForm() {
+    const latestVersion = versions[0];
+
+    if (!latestVersion || !validProductId) {
+      return;
+    }
+
+    try {
+      cancelVersionForm();
+      setFormLoadingAction("correction");
+      setCorrectionError(null);
+      setSuccessMessage(null);
+
+      const [recipeResponse, materialsResponse] = await Promise.all([
+        apiGet<RecipeDetailResponse>(
+          `/production/products/${productId}/recipes/${latestVersion.id}?org_id=${ORG_ID}`,
+        ),
+        apiGet<MaterialsResponse>(`/purchasing/materials?org_id=${ORG_ID}`),
+      ]);
+
+      setCorrectionMaterials(materialsResponse.materials);
+      setCorrectionLines(
+        recipeResponse.recipe.lines.map((line) => ({
+          materialId: line.material.id,
+          quantity: line.quantity_in_reference_unit,
+        })),
+      );
+      setShowCorrectionForm(true);
+    } catch (err) {
+      setCorrectionError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de préparer la correction.",
+      );
+    } finally {
+      setFormLoadingAction(null);
+    }
+  }
+
+  function cancelCorrectionForm() {
+    setShowCorrectionForm(false);
+    setCorrectionError(null);
+    setCorrectionReason("");
+    setCorrectionMaterials([]);
+    setCorrectionLines([]);
+  }
+
   function updateFormLine(index: number, changes: Partial<RecipeFormLine>) {
     setFormLines((currentLines) =>
+      currentLines.map((line, lineIndex) =>
+        lineIndex === index ? { ...line, ...changes } : line,
+      ),
+    );
+  }
+
+  function updateCorrectionLine(index: number, changes: Partial<RecipeFormLine>) {
+    setCorrectionLines((currentLines) =>
       currentLines.map((line, lineIndex) =>
         lineIndex === index ? { ...line, ...changes } : line,
       ),
@@ -337,6 +406,90 @@ export default function ProductionProductRecipePage() {
     }
   }
 
+  async function correctLatestVersion() {
+    const latestVersion = versions[0];
+    const trimmedReason = correctionReason.trim();
+
+    if (!latestVersion) {
+      return;
+    }
+
+    if (trimmedReason === "") {
+      setCorrectionError("Le motif de la correction est obligatoire.");
+      return;
+    }
+
+    if (trimmedReason.length > 500) {
+      setCorrectionError("Le motif de la correction ne peut pas dépasser 500 caractères.");
+      return;
+    }
+
+    if (correctionLines.length === 0) {
+      setCorrectionError("Ajoutez au moins une matière.");
+      return;
+    }
+
+    const materialIds = correctionLines.map((line) => line.materialId);
+    if (materialIds.some((materialId) => materialId === null)) {
+      setCorrectionError("Chaque ligne doit contenir une matière.");
+      return;
+    }
+
+    if (new Set(materialIds).size !== materialIds.length) {
+      setCorrectionError("Une matière ne peut apparaître qu’une seule fois.");
+      return;
+    }
+
+    const lines = correctionLines.map((line) => ({
+      material_id: line.materialId as number,
+      quantity_in_reference_unit: normalizedPositiveQuantity(line.quantity),
+    }));
+
+    if (lines.some((line) => line.quantity_in_reference_unit === null)) {
+      setCorrectionError(
+        "Chaque quantité doit être positive, avec au plus 8 chiffres entiers et 6 décimales.",
+      );
+      return;
+    }
+
+    try {
+      setCorrecting(true);
+      setCorrectionError(null);
+
+      const response = await apiPatch<
+        CorrectRecipeResponse,
+        {
+          correction_reason: string;
+          lines: Array<{
+            material_id: number;
+            quantity_in_reference_unit: string;
+          }>;
+        }
+      >(
+        `/production/products/${productId}/recipes/${latestVersion.id}/correction?org_id=${ORG_ID}`,
+        {
+          correction_reason: trimmedReason,
+          lines: lines as Array<{
+            material_id: number;
+            quantity_in_reference_unit: string;
+          }>,
+        },
+      );
+
+      cancelCorrectionForm();
+      setSuccessMessage(response.message);
+      await loadRecipe();
+    } catch (err) {
+      setCorrectionError(
+        err instanceof Error
+          ? err.message
+          : "Impossible de corriger la fiche technique.",
+      );
+    } finally {
+      setCorrecting(false);
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: 24 }}>
@@ -375,14 +528,26 @@ export default function ProductionProductRecipePage() {
         <div style={sectionHeaderStyle}>
           <h3 style={sectionTitleStyle}>Fiche technique active</h3>
           {versions.length > 0 && (
-            <button
-              type="button"
-              onClick={() => void openVersionForm()}
-              disabled={formLoading || creating}
-              style={primaryButtonStyle}
-            >
-              {formLoading ? "Préparation..." : "Nouvelle version"}
-            </button>
+            <div style={headerActionsStyle}>
+              <button
+                type="button"
+                onClick={() => void openVersionForm()}
+                disabled={formLoadingAction !== null || creating || correcting}
+                style={primaryButtonStyle}
+              >
+                {formLoadingAction === "version"
+                  ? "Préparation..."
+                  : "Nouvelle version"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void openCorrectionForm()}
+                disabled={formLoadingAction !== null || creating || correcting}
+                style={secondaryButtonStyle}
+              >
+                {formLoadingAction === "correction" ? "Préparation..." : "Corriger"}
+              </button>
+            </div>
           )}
         </div>
 
@@ -563,6 +728,151 @@ export default function ProductionProductRecipePage() {
         </section>
       )}
 
+      {showCorrectionForm && versions[0] && (
+        <section style={sectionStyle}>
+          <h3 style={sectionTitleStyle}>
+            Correction de la version du {formatDate(versions[0].effective_from)}
+          </h3>
+          <p style={{ margin: "0 0 16px", color: "#64748b" }}>
+            Utilisez cette action uniquement pour corriger une erreur de saisie.
+            Pour un changement réel de recette, créez une nouvelle version.
+          </p>
+
+          {correctionError && <MessageBox>{correctionError}</MessageBox>}
+
+          <p style={{ margin: "0 0 16px", color: "#475569" }}>
+            Date d’effet : <strong>{formatDate(versions[0].effective_from)}</strong>
+          </p>
+
+          <label style={textareaLabelStyle}>
+            Motif de la correction
+            <textarea
+              value={correctionReason}
+              onChange={(event) => setCorrectionReason(event.target.value)}
+              maxLength={500}
+              placeholder={"Mauvaise matière saisie\nQuantité incorrecte sur la fiche"}
+              disabled={correcting}
+              style={textareaStyle}
+            />
+          </label>
+
+          <div style={{ overflowX: "auto", marginTop: 18 }}>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={headerCellStyle}>Matière</th>
+                  <th style={headerCellStyle}>Quantité</th>
+                  <th style={headerCellStyle}>Unité</th>
+                  <th style={headerCellStyle} aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {correctionLines.map((line, index) => {
+                  const selectedMaterial = correctionMaterials.find(
+                    (material) => material.id === line.materialId,
+                  );
+
+                  return (
+                    <tr key={index}>
+                      <td style={cellStyle}>
+                        <select
+                          value={line.materialId ?? ""}
+                          onChange={(event) =>
+                            updateCorrectionLine(index, {
+                              materialId:
+                                event.target.value === ""
+                                  ? null
+                                  : Number(event.target.value),
+                            })
+                          }
+                          disabled={correcting}
+                          style={inputStyle}
+                        >
+                          <option value="">Choisir une matière</option>
+                          {correctionMaterials
+                            .filter(
+                              (material) =>
+                                material.is_active || material.id === line.materialId,
+                            )
+                            .map((material) => (
+                              <option key={material.id} value={material.id}>
+                                {material.name}
+                                {material.is_active ? "" : " (inactive)"}
+                              </option>
+                            ))}
+                        </select>
+                      </td>
+                      <td style={cellStyle}>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={line.quantity}
+                          onChange={(event) =>
+                            updateCorrectionLine(index, { quantity: event.target.value })
+                          }
+                          disabled={correcting}
+                          style={inputStyle}
+                        />
+                      </td>
+                      <td style={cellStyle}>
+                        {selectedMaterial?.reference_measure_unit.symbol ?? "—"}
+                      </td>
+                      <td style={cellStyle}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCorrectionLines((currentLines) =>
+                              currentLines.filter((_, lineIndex) => lineIndex !== index),
+                            )
+                          }
+                          disabled={correcting}
+                          style={secondaryButtonStyle}
+                        >
+                          Retirer
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setCorrectionLines((currentLines) => [
+                ...currentLines,
+                { materialId: null, quantity: "" },
+              ])
+            }
+            disabled={correcting}
+            style={{ ...secondaryButtonStyle, marginTop: 14 }}
+          >
+            + Ajouter une matière
+          </button>
+
+          <div style={formActionsStyle}>
+            <button
+              type="button"
+              onClick={() => void correctLatestVersion()}
+              disabled={correcting}
+              style={primaryButtonStyle}
+            >
+              {correcting ? "Correction..." : "Corriger la version"}
+            </button>
+            <button
+              type="button"
+              onClick={cancelCorrectionForm}
+              disabled={correcting}
+              style={secondaryButtonStyle}
+            >
+              Annuler
+            </button>
+          </div>
+        </section>
+      )}
+
       <section style={sectionStyle}>
         <h3 style={sectionTitleStyle}>Historique des versions</h3>
 
@@ -658,12 +968,23 @@ const sectionHeaderStyle: React.CSSProperties = {
   flexWrap: "wrap",
 };
 
+const headerActionsStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+};
+
 const labelStyle: React.CSSProperties = {
   display: "grid",
   gap: 5,
   color: "#475569",
   fontSize: 13,
   maxWidth: 250,
+};
+
+const textareaLabelStyle: React.CSSProperties = {
+  ...labelStyle,
+  maxWidth: 600,
 };
 
 const inputStyle: React.CSSProperties = {
@@ -673,6 +994,12 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 8,
   background: "white",
   boxSizing: "border-box",
+};
+
+const textareaStyle: React.CSSProperties = {
+  ...inputStyle,
+  minHeight: 90,
+  resize: "vertical",
 };
 
 const primaryButtonStyle: React.CSSProperties = {
