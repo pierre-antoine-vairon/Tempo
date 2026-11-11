@@ -7,6 +7,7 @@ use App\Http\Controllers\ProductRecipeController;
 use App\Http\Controllers\PurchasingReferenceController;
 use App\Http\Controllers\SiteOperatingCalendarController;
 use App\Http\Controllers\SupplierCatalogController;
+use App\Http\Controllers\SupplierCatalogImportController;
 use App\Http\Controllers\SupplierItemController;
 
 Route::get('/health', function () {
@@ -46,6 +47,13 @@ Route::prefix('purchasing')
 
         Route::get('/materials', 'materials');
         Route::post('/materials', 'createMaterial');
+    });
+
+Route::prefix('purchasing')
+    ->whereNumber('supplierId')
+    ->controller(SupplierCatalogImportController::class)
+    ->group(function () {
+        Route::post('/suppliers/{supplierId}/catalog-imports/preview', 'preview');
     });
 
 Route::prefix('purchasing')
