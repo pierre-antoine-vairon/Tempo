@@ -8,6 +8,7 @@ use App\Http\Controllers\PurchasingReferenceController;
 use App\Http\Controllers\SiteOperatingCalendarController;
 use App\Http\Controllers\SupplierCatalogController;
 use App\Http\Controllers\SupplierCatalogImportController;
+use App\Http\Controllers\SupplierCatalogPdfExtractionController;
 use App\Http\Controllers\SupplierItemController;
 
 Route::get('/health', function () {
@@ -55,6 +56,12 @@ Route::prefix('purchasing')
     ->group(function () {
         Route::post('/suppliers/{supplierId}/catalog-imports/preview', 'preview');
         Route::post('/suppliers/{supplierId}/catalog-imports/commit', 'commit');
+    });
+
+Route::prefix('purchasing')
+    ->controller(SupplierCatalogPdfExtractionController::class)
+    ->group(function () {
+        Route::post('/catalog-imports/extract-pdf', 'extract');
     });
 
 Route::prefix('purchasing')
