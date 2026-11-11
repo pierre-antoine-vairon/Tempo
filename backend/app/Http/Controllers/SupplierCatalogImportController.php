@@ -112,6 +112,21 @@ class SupplierCatalogImportController extends Controller
                     ->where('operation', 'create_item')->count(),
                 'existing_items' => $itemSummary
                     ->where('operation', 'use_existing_item')->count(),
+                'catalog_operation' => $catalog['operation'],
+                'prices_to_create' => $itemSummary
+                    ->where('price_operation', 'create_price')->count(),
+                'existing_prices' => $itemSummary
+                    ->where('price_operation', 'use_existing_price')->count(),
+                'price_conflicts' => $itemSummary
+                    ->filter(fn (array $item) => $this->hasIssue(
+                        $item['errors'],
+                        'supplier_item_price_conflict'
+                    ))
+                    ->count(),
+                'already_known_items' => $itemSummary
+                    ->filter(fn (array $item) => $item['operation'] === 'use_existing_item'
+                        && $item['price_operation'] === 'use_existing_price')
+                    ->count(),
                 'valid_items' => $itemSummary->where('status', 'valid')->count(),
                 'warning_items' => $itemSummary->where('status', 'warning')->count(),
                 'invalid_items' => $itemSummary->where('status', 'invalid')->count(),
@@ -144,16 +159,15 @@ class SupplierCatalogImportController extends Controller
             $errors
         );
 
-        if ($name !== null && $effectiveFrom !== null && DB::table('y_supplier_catalogs')
-            ->where('org_id', $orgId)
-            ->where('supplier_id', $supplierId)
-            ->where('name', $name)
-            ->where('effective_from', $effectiveFrom)
-            ->exists()) {
-            $errors[] = $this->issue(
-                'catalog_already_exists',
-                'Un catalogue fournisseur identique existe déjà.'
-            );
+        $existingCatalog = null;
+        if ($name !== null && $effectiveFrom !== null) {
+            $existingCatalog = DB::table('y_supplier_catalogs')
+                ->select('id')
+                ->where('org_id', $orgId)
+                ->where('supplier_id', $supplierId)
+                ->where('name', $name)
+                ->where('effective_from', $effectiveFrom)
+                ->first();
         }
 
         return [
@@ -161,6 +175,12 @@ class SupplierCatalogImportController extends Controller
             'effective_from' => $effectiveFrom,
             'source_filename' => $sourceFilename,
             'status' => $this->status($errors, []),
+            'operation' => $existingCatalog === null
+                ? 'create_catalog'
+                : 'use_existing_catalog',
+            'resolved_catalog_id' => $existingCatalog === null
+                ? null
+                : (int) $existingCatalog->id,
             'warnings' => [],
             'errors' => $errors,
         ];
@@ -513,6 +533,8 @@ class SupplierCatalogImportController extends Controller
                 'status' => 'valid',
                 'operation' => 'skip',
                 'resolved_supplier_item_id' => null,
+                'price_operation' => 'skip',
+                'resolved_supplier_item_price_id' => null,
                 'warnings' => $warnings,
                 'errors' => $errors,
             ];
@@ -583,14 +605,32 @@ class SupplierCatalogImportController extends Controller
                     $item['resolved_supplier_item_id'] = (int) $existing->id;
                     $this->metadataWarnings($item, $existing);
 
-                    if (isset($existingPrices[(int) $existing->id])) {
+                    $existingPrice = $existingPrices[(int) $existing->id] ?? null;
+                    if ($existingPrice === null) {
+                        $item['price_operation'] = 'create_price';
+                    } elseif ($this->decimalKey($existingPrice->price_excl_tax)
+                        === $this->decimalKey($item['price_excl_tax'])
+                        && strtoupper($existingPrice->currency_code) === $item['currency_code']) {
+                        $item['price_operation'] = 'use_existing_price';
+                        $item['resolved_supplier_item_price_id'] = (int) $existingPrice->id;
+                    } else {
+                        $item['price_operation'] = 'skip';
+                        $item['resolved_supplier_item_price_id'] = (int) $existingPrice->id;
                         $item['errors'][] = $this->issue(
-                            'supplier_item_price_already_exists',
-                            'Un tarif organisation existe déjà pour cet article et cette date.'
+                            'supplier_item_price_conflict',
+                            'Un tarif organisation existe déjà pour cet article et cette date, avec un montant ou une devise différente.',
+                            null,
+                            [
+                                'existing_price_excl_tax' => $existingPrice->price_excl_tax,
+                                'imported_price_excl_tax' => $item['price_excl_tax'],
+                                'existing_currency_code' => $existingPrice->currency_code,
+                                'imported_currency_code' => $item['currency_code'],
+                            ]
                         );
                     }
                 } else {
                     $item['operation'] = 'create_item';
+                    $item['price_operation'] = 'create_price';
                 }
             }
 
@@ -634,7 +674,7 @@ class SupplierCatalogImportController extends Controller
 
     /**
      * @param  array<string, object>  $existingItems
-     * @return array<int, true>
+     * @return array<int, object>
      */
     private function existingOrganizationWidePrices(
         array $existingItems,
@@ -646,6 +686,7 @@ class SupplierCatalogImportController extends Controller
         }
 
         return DB::table('y_supplier_item_prices')
+            ->select(['id', 'supplier_item_id', 'price_excl_tax', 'currency_code'])
             ->where('org_id', $orgId)
             ->whereIn('supplier_item_id', array_map(
                 fn (object $item) => (int) $item->id,
@@ -653,8 +694,8 @@ class SupplierCatalogImportController extends Controller
             ))
             ->whereNull('site_id')
             ->where('effective_from', $effectiveFrom)
-            ->pluck('supplier_item_id')
-            ->mapWithKeys(fn ($itemId) => [(int) $itemId => true])
+            ->get()
+            ->mapWithKeys(fn ($price) => [(int) $price->supplier_item_id => $price])
             ->all();
     }
 
@@ -824,14 +865,38 @@ class SupplierCatalogImportController extends Controller
         return mb_strtolower($value);
     }
 
-    /** @return array<string, string> */
-    private function issue(string $code, string $message, ?string $field = null): array
-    {
+    /** @return array<string, mixed> */
+    private function issue(
+        string $code,
+        string $message,
+        ?string $field = null,
+        array $context = []
+    ): array {
         return array_filter([
             'code' => $code,
             'message' => $message,
             'field' => $field,
+            ...$context,
         ], fn ($value) => $value !== null);
+    }
+
+    /** @param array<int, array<string, mixed>> $issues */
+    private function hasIssue(array $issues, string $code): bool
+    {
+        return collect($issues)->contains(
+            fn (array $issue) => $issue['code'] === $code
+        );
+    }
+
+    private function decimalKey(string $value): string
+    {
+        $parts = explode('.', $value, 2);
+        $integer = $parts[0];
+        $decimal = $parts[1] ?? '';
+        $integer = ltrim($integer, '0') ?: '0';
+        $decimal = rtrim($decimal, '0');
+
+        return $decimal === '' ? $integer : "{$integer}.{$decimal}";
     }
 
     /** @param array<int, array<string, mixed>> $errors
