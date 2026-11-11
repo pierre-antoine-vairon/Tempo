@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use DateTimeImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -36,7 +37,94 @@ class SupplierCatalogImportController extends Controller
             ], 404);
         }
 
+        $analysis = $this->analyzeImport($request->json()->all(), $orgId, $supplierId);
+
+        return response()->json([
+            'ok' => true,
+            'schema_version' => 1,
+            'supplier' => $this->supplierResponse($supplier),
+            ...$analysis,
+        ]);
+    }
+
+    public function commit(Request $request, int $supplierId): JsonResponse
+    {
+        $orgId = (int) $request->query('org_id', config('tempo.default_org_id'));
+
+        if (! DB::table('y_orgs')->where('id', $orgId)->exists()) {
+            return response()->json([
+                'error' => 'organization_not_found',
+                'message' => 'Organisation introuvable.',
+            ], 404);
+        }
+
+        $supplier = DB::table('y_suppliers')
+            ->select(['id', 'name'])
+            ->where('id', $supplierId)
+            ->where('org_id', $orgId)
+            ->first();
+
+        if (! $supplier) {
+            return response()->json([
+                'error' => 'supplier_not_found',
+                'message' => 'Fournisseur introuvable.',
+            ], 404);
+        }
+
         $payload = $request->json()->all();
+        $confirmWarnings = ($payload['confirm_warnings'] ?? false) === true;
+        $analysis = $this->analyzeImport($payload, $orgId, $supplierId);
+
+        if ($this->analysisHasErrors($analysis)) {
+            return $this->analysisFailure('catalog_import_invalid', 'Le catalogue contient des erreurs bloquantes.', $analysis, $supplier);
+        }
+
+        if (! $confirmWarnings && $this->analysisHasWarnings($analysis)) {
+            return $this->analysisFailure('warnings_confirmation_required', 'Les warnings doivent être confirmés avant l’import.', $analysis, $supplier);
+        }
+
+        try {
+            $result = DB::transaction(function () use (
+                $payload,
+                $orgId,
+                $supplierId,
+                $supplier,
+                $confirmWarnings
+            ) {
+                $analysis = $this->analyzeImport($payload, $orgId, $supplierId);
+                if ($this->analysisHasErrors($analysis)) {
+                    return ['blocked' => true, 'analysis' => $analysis, 'supplier' => $supplier];
+                }
+                if (! $confirmWarnings && $this->analysisHasWarnings($analysis)) {
+                    return ['warnings_blocked' => true, 'analysis' => $analysis, 'supplier' => $supplier];
+                }
+
+                return $this->persistImport($analysis, $orgId, $supplierId, $supplier);
+            });
+        } catch (QueryException $exception) {
+            if (isset($exception->errorInfo[1]) && (int) $exception->errorInfo[1] === 1062) {
+                return response()->json([
+                    'error' => 'catalog_import_concurrent_change',
+                    'message' => 'Les données ont changé pendant l’import. Relancez la prévisualisation.',
+                ], 409);
+            }
+
+            throw $exception;
+        }
+
+        if (isset($result['blocked'])) {
+            return $this->analysisFailure('catalog_import_invalid', 'Le catalogue contient des erreurs bloquantes.', $result['analysis'], $supplier);
+        }
+        if (isset($result['warnings_blocked'])) {
+            return $this->analysisFailure('warnings_confirmation_required', 'Les warnings doivent être confirmés avant l’import.', $result['analysis'], $supplier);
+        }
+
+        return response()->json($result, 201);
+    }
+
+    /** @return array<string, mixed> */
+    private function analyzeImport(array $payload, int $orgId, int $supplierId): array
+    {
         $errors = [];
 
         if (($payload['schema_version'] ?? null) !== 1) {
@@ -93,13 +181,7 @@ class SupplierCatalogImportController extends Controller
         $categorySummary = collect($categories);
         $itemSummary = collect($items);
 
-        return response()->json([
-            'ok' => true,
-            'schema_version' => 1,
-            'supplier' => [
-                'id' => (int) $supplier->id,
-                'name' => $supplier->name,
-            ],
+        return [
             'catalog' => $catalog,
             'categories' => $categories,
             'items' => $items,
@@ -139,7 +221,224 @@ class SupplierCatalogImportController extends Controller
             ],
             'warnings' => [],
             'errors' => $errors,
-        ]);
+        ];
+    }
+
+    /** @param array<string, mixed> $analysis */
+    private function persistImport(
+        array $analysis,
+        int $orgId,
+        int $supplierId,
+        object $supplier
+    ): array {
+        $now = now('UTC');
+        $catalog = $analysis['catalog'];
+        $catalogId = $catalog['resolved_catalog_id'];
+        $catalogsCreated = 0;
+
+        if ($catalog['operation'] === 'create_catalog') {
+            $catalogId = DB::table('y_supplier_catalogs')->insertGetId([
+                'org_id' => $orgId,
+                'supplier_id' => $supplierId,
+                'name' => $catalog['name'],
+                'effective_from' => $catalog['effective_from'],
+                'source_filename' => $catalog['source_filename'],
+                'created_by' => null,
+                'created_at' => $now,
+                'updated_by' => null,
+                'updated_at' => $now,
+            ]);
+            $catalogsCreated = 1;
+        }
+
+        $categoryIds = $this->existingCategories($orgId, $supplierId);
+        $pendingCategories = [];
+        $categoryMappings = [];
+        $categoriesCreated = 0;
+        $categoriesReused = 0;
+
+        foreach ($analysis['categories'] as $category) {
+            $pathKey = $this->key($category['source_path']);
+            if ($category['operation'] === 'use_existing_category') {
+                $categoryIds[$pathKey] = $category['resolved_category_id'];
+                $categoriesReused++;
+                $categoryMappings[] = [
+                    'client_key' => $category['client_key'],
+                    'id' => $category['resolved_category_id'],
+                    'operation' => 'use_existing_category',
+                ];
+            } else {
+                $pendingCategories[$pathKey] = $category;
+            }
+        }
+
+        while ($pendingCategories !== []) {
+            $createdInPass = false;
+            foreach ($pendingCategories as $pathKey => $category) {
+                $parentPath = $category['parent_source_path'];
+                $parentId = $parentPath === null
+                    ? null
+                    : ($categoryIds[$this->key($parentPath)] ?? null);
+
+                if ($parentPath !== null && $parentId === null) {
+                    continue;
+                }
+
+                $categoryId = DB::table('y_supplier_categories')->insertGetId([
+                    'org_id' => $orgId,
+                    'supplier_id' => $supplierId,
+                    'parent_id' => $parentId,
+                    'name' => $category['name'],
+                    'source_path' => $category['source_path'],
+                    'is_active' => 1,
+                    'created_by' => null,
+                    'created_at' => $now,
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
+                $categoryIds[$pathKey] = (int) $categoryId;
+                $categoryMappings[] = [
+                    'client_key' => $category['client_key'],
+                    'id' => (int) $categoryId,
+                    'operation' => 'create_category',
+                ];
+                unset($pendingCategories[$pathKey]);
+                $categoriesCreated++;
+                $createdInPass = true;
+            }
+
+            if (! $createdInPass) {
+                throw new \LogicException('Les catégories de l’import ne peuvent pas être résolues.');
+            }
+        }
+
+        $itemsCreated = 0;
+        $itemsReused = 0;
+        $pricesCreated = 0;
+        $pricesReused = 0;
+        $itemMappings = [];
+
+        foreach ($analysis['items'] as $item) {
+            $itemId = $item['resolved_supplier_item_id'];
+            if ($item['operation'] === 'create_item') {
+                $categoryId = $item['category_source_path'] === null
+                    ? null
+                    : $categoryIds[$this->key($item['category_source_path'])];
+                $itemId = DB::table('y_supplier_items')->insertGetId([
+                    'org_id' => $orgId,
+                    'supplier_id' => $supplierId,
+                    'material_id' => null,
+                    'supplier_category_id' => $categoryId,
+                    'name' => $item['name'],
+                    'supplier_sku' => $item['supplier_sku'],
+                    'brand' => $item['brand'],
+                    'purchase_unit_label' => $item['purchase_unit_label'],
+                    'pack_label' => $item['pack_label'],
+                    'quantity_in_reference_unit' => null,
+                    'is_active' => 1,
+                    'created_by' => null,
+                    'created_at' => $now,
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
+                $itemsCreated++;
+            } else {
+                $itemsReused++;
+            }
+
+            $priceId = $item['resolved_supplier_item_price_id'];
+            if ($item['price_operation'] === 'create_price') {
+                $priceId = DB::table('y_supplier_item_prices')->insertGetId([
+                    'org_id' => $orgId,
+                    'supplier_item_id' => $itemId,
+                    'site_id' => null,
+                    'supplier_catalog_id' => $catalogId,
+                    'price_excl_tax' => $item['price_excl_tax'],
+                    'currency_code' => $item['currency_code'],
+                    'effective_from' => $catalog['effective_from'],
+                    'created_by' => null,
+                    'created_at' => $now,
+                    'updated_by' => null,
+                    'updated_at' => $now,
+                ]);
+                $pricesCreated++;
+            } else {
+                $pricesReused++;
+            }
+
+            $itemMappings[] = [
+                'client_key' => $item['client_key'],
+                'id' => (int) $itemId,
+                'operation' => $item['operation'],
+                'price_id' => $priceId === null ? null : (int) $priceId,
+                'price_operation' => $item['price_operation'],
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'supplier' => $this->supplierResponse($supplier),
+            'catalog' => [
+                'id' => (int) $catalogId,
+                'operation' => $catalog['operation'],
+            ],
+            'summary' => [
+                'catalogs_created' => $catalogsCreated,
+                'categories_created' => $categoriesCreated,
+                'categories_reused' => $categoriesReused,
+                'items_created' => $itemsCreated,
+                'items_reused' => $itemsReused,
+                'prices_created' => $pricesCreated,
+                'prices_reused' => $pricesReused,
+            ],
+            'categories' => $categoryMappings,
+            'items' => $itemMappings,
+            'message' => 'Catalogue fournisseur importé.',
+        ];
+    }
+
+    /** @param array<string, mixed> $analysis */
+    private function analysisHasErrors(array $analysis): bool
+    {
+        return $analysis['errors'] !== [] || $analysis['catalog']['status'] === 'invalid'
+            || collect($analysis['categories'])->contains(
+                fn (array $category) => $category['status'] === 'invalid'
+            ) || collect($analysis['items'])->contains(
+                fn (array $item) => $item['status'] === 'invalid'
+            );
+    }
+
+    /** @param array<string, mixed> $analysis */
+    private function analysisHasWarnings(array $analysis): bool
+    {
+        return $analysis['warnings'] !== [] || $analysis['catalog']['warnings'] !== []
+            || collect($analysis['categories'])->contains(
+                fn (array $category) => $category['warnings'] !== []
+            ) || collect($analysis['items'])->contains(
+                fn (array $item) => $item['warnings'] !== []
+            );
+    }
+
+    /** @param array<string, mixed> $analysis */
+    private function analysisFailure(
+        string $error,
+        string $message,
+        array $analysis,
+        object $supplier
+    ): JsonResponse {
+        return response()->json([
+            'ok' => false,
+            'error' => $error,
+            'message' => $message,
+            'supplier' => $this->supplierResponse($supplier),
+            'analysis' => $analysis,
+        ], 422);
+    }
+
+    /** @return array{id: int, name: string} */
+    private function supplierResponse(object $supplier): array
+    {
+        return ['id' => (int) $supplier->id, 'name' => $supplier->name];
     }
 
     /** @return array<string, mixed> */

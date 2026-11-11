@@ -54,6 +54,7 @@ Route::prefix('purchasing')
     ->controller(SupplierCatalogImportController::class)
     ->group(function () {
         Route::post('/suppliers/{supplierId}/catalog-imports/preview', 'preview');
+        Route::post('/suppliers/{supplierId}/catalog-imports/commit', 'commit');
     });
 
 Route::prefix('purchasing')
