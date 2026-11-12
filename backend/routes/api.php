@@ -10,6 +10,7 @@ use App\Http\Controllers\SupplierCatalogController;
 use App\Http\Controllers\SupplierCatalogImportController;
 use App\Http\Controllers\SupplierCatalogPdfExtractionController;
 use App\Http\Controllers\SupplierItemController;
+use App\Http\Controllers\SupplierCatalogDocumentParserController;
 
 Route::get('/health', function () {
     DB::selectOne('SELECT 1 as ok');
@@ -62,6 +63,12 @@ Route::prefix('purchasing')
     ->controller(SupplierCatalogPdfExtractionController::class)
     ->group(function () {
         Route::post('/catalog-imports/extract-pdf', 'extract');
+    });
+
+Route::prefix('purchasing')
+    ->controller(SupplierCatalogDocumentParserController::class)
+    ->group(function () {
+        Route::post('/catalog-imports/parse', 'parse');
     });
 
 Route::prefix('purchasing')
