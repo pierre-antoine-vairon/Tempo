@@ -1116,10 +1116,10 @@ class SupplierCatalogImportController extends Controller
     /** @param array<int, array<string, mixed>> $errors */
     private function price(mixed $value, array &$errors): ?string
     {
-        if (! is_string($value) || ! preg_match('/^\d{1,8}(?:\.\d{1,4})?$/', $value)) {
+        if (! is_string($value) || ! preg_match('/^\d{1,8}(?:\.\d{1,6})?$/', $value)) {
             $errors[] = $this->issue(
                 'price_excl_tax_invalid',
-                'Le prix HT doit être une chaîne décimale compatible avec DECIMAL(12,4).',
+                'Le prix HT doit être une chaîne décimale compatible avec DECIMAL(14,6).',
                 'price_excl_tax'
             );
 

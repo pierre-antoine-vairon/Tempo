@@ -112,6 +112,8 @@ function formatPrice(price: string, currencyCode: string): string {
   return `${new Intl.NumberFormat("fr-FR", {
     style: "currency",
     currency: currencyCode,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
   }).format(Number(price))} HT`;
 }
 

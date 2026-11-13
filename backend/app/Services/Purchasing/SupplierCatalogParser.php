@@ -92,8 +92,8 @@ class SupplierCatalogParser
                 }
 
                 $price = str_replace(',', '.', $article['price']);
-                if (! preg_match('/^\d{1,8}\.\d{1,4}$/', $price)) {
-                    $this->addUnparsedRow($unparsedRows, $warnings, 'price_precision_not_supported', 'Le prix HT ne peut pas être représenté sans arrondi dans DECIMAL(12,4).', $pageNumber, $rawLabel);
+                if (! preg_match('/^\d{1,8}\.\d{1,6}$/', $price)) {
+                    $this->addUnparsedRow($unparsedRows, $warnings, 'price_precision_not_supported', 'Le prix HT ne peut pas être représenté sans arrondi dans DECIMAL(14,6).', $pageNumber, $rawLabel);
 
                     continue;
                 }
@@ -298,10 +298,11 @@ class SupplierCatalogParser
     private function articleAnchor(string $line, array $profile): ?array
     {
         $article = $profile['article'];
+        $pricePattern = '(?:'.$article['price_pattern'].'|\\d{1,8}[,.]\\d{7,})';
         $trailingPattern = $article['trailing_pattern'] === null
             ? '\\s*'
             : '\\s*(?:'.$article['trailing_pattern'].')\\s*';
-        $pattern = '/^(?<prefix>.*?)(?<!\S)(?<sku>'.$article['sku_pattern'].')\s+(?<details>.*?)(?<price>'.$article['price_pattern'].')'.$trailingPattern.'$/ui';
+        $pattern = '/^(?<prefix>.*?)(?<!\S)(?<sku>'.$article['sku_pattern'].')\s+(?<details>.*?)(?<price>'.$pricePattern.')'.$trailingPattern.'$/ui';
         if (preg_match($pattern, $line, $matches) !== 1) {
             return null;
         }

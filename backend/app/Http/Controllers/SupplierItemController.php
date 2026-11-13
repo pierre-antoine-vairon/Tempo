@@ -292,7 +292,7 @@ class SupplierItemController extends Controller
         $validated = $request->validate([
             'site_id' => ['nullable', 'integer', 'min:1'],
             'supplier_catalog_id' => ['nullable', 'integer', 'min:1'],
-            'price_excl_tax' => ['required', 'numeric', 'min:0'],
+            'price_excl_tax' => ['required', 'regex:/^\d{1,8}(?:\.\d{1,6})?$/'],
             'currency_code' => ['required', 'string', 'size:3'],
             'effective_from' => ['required', 'date_format:Y-m-d'],
         ]);
@@ -343,7 +343,7 @@ class SupplierItemController extends Controller
                 'supplier_item_id' => $itemId,
                 'site_id' => $siteId,
                 'supplier_catalog_id' => $catalogId,
-                'price_excl_tax' => $validated['price_excl_tax'],
+                'price_excl_tax' => (string) $validated['price_excl_tax'],
                 'currency_code' => strtoupper(trim($validated['currency_code'])),
                 'effective_from' => $effectiveFrom,
                 'created_by' => null,

@@ -125,18 +125,26 @@ class SupplierCatalogParserTest extends TestCase
         $this->assertSame('Huiles', $result['parser_warnings'][$warningIndex]['source']['raw_label']);
     }
 
-    public function test_it_keeps_an_over_precise_price_out_of_importable_items(): void
+    public function test_it_keeps_a_five_decimal_price_without_rounding(): void
     {
         $result = $this->parse("FOURRAGES\nLC CAFE DECAFEINE PASTILLE 7G CT-CT150P\n122423 CLUB CAFE Colis 150 pcs26,78295 new Non - - 0,00");
 
-        $this->assertSame([], $result['items']);
-        $this->assertSame('price_precision_not_supported', $result['unparsed_rows'][0]['code']);
+        $this->assertSame('26.78295', $result['items'][0]['price_excl_tax']);
+        $this->assertSame([], $result['unparsed_rows']);
         $this->assertSame(1, $result['parser_summary']['items_detected']);
     }
 
-    public function test_it_does_not_merge_articles_around_an_over_precise_price(): void
+    public function test_it_keeps_a_six_decimal_price_without_rounding(): void
     {
-        $result = $this->parse("ARTICLE A 122430 Colis 1kg 9,3340 new Non - - 0,00\nARTICLE B 122431 Colis 1kg 26,78295 new Non - - 0,00\nARTICLE C 122432 Colis 1kg 9,5900 new Non - - 0,00");
+        $result = $this->parse("FOURRAGES\nARTICLE SIX DECIMALES\n122424 Colis 1kg 99,360001 new Non - - 0,00");
+
+        $this->assertSame('99.360001', $result['items'][0]['price_excl_tax']);
+        $this->assertSame([], $result['unparsed_rows']);
+    }
+
+    public function test_it_rejects_a_seven_decimal_price_without_merging_following_articles(): void
+    {
+        $result = $this->parse("ARTICLE A 122430 Colis 1kg 9,3340 new Non - - 0,00\nARTICLE B 122431 Colis 1kg 26,7829500 new Non - - 0,00\nARTICLE C 122432 Colis 1kg 9,5900 new Non - - 0,00");
 
         $this->assertSame(['122430', '122432'], array_column($result['items'], 'supplier_sku'));
         $this->assertSame('price_precision_not_supported', $result['unparsed_rows'][0]['code']);
@@ -154,7 +162,7 @@ class SupplierCatalogParserTest extends TestCase
 
     public function test_an_unimportable_article_does_not_contaminate_following_articles_or_category_context(): void
     {
-        $result = $this->parseWithRegistryProfile("Pâtisseries\\MIX\nMIX CRUMBLE DAWN 121503 Sac 3,5kg 19,220002 new Non - - 0,00\nFOURRAGES\nLC CONCENTRE D'ORANGE KG-SEAU3.5K 122128 Seau 3,5kg 26,8275 new Non - - 0,00\nLC CREME CARAMEL B/S KG-SEAU3.5K\n122107 CLUB CAFE Seau 3,5kg 24,1640 new Non - - 0,00");
+        $result = $this->parseWithRegistryProfile("Pâtisseries\\MIX\nMIX CRUMBLE DAWN 121503 Sac 3,5kg 19,2200020 new Non - - 0,00\nFOURRAGES\nLC CONCENTRE D'ORANGE KG-SEAU3.5K 122128 Seau 3,5kg 26,8275 new Non - - 0,00\nLC CREME CARAMEL B/S KG-SEAU3.5K\n122107 CLUB CAFE Seau 3,5kg 24,1640 new Non - - 0,00");
 
         $this->assertSame(['122128', '122107'], array_column($result['items'], 'supplier_sku'));
         $this->assertSame('LC CONCENTRE D\'ORANGE KG-SEAU3.5K', $result['items'][0]['name']);
