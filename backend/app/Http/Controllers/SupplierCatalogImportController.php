@@ -2,14 +2,113 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\Purchasing\CatalogParsingProfileRegistry;
+use App\Services\Purchasing\PdfTextExtractor;
+use App\Services\Purchasing\SupplierCatalogParser;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
+use RuntimeException;
 
 class SupplierCatalogImportController extends Controller
 {
+    public function previewPdf(
+        Request $request,
+        int $supplierId,
+        PdfTextExtractor $extractor,
+        CatalogParsingProfileRegistry $profiles,
+        SupplierCatalogParser $parser
+    ): JsonResponse {
+        $orgId = (int) $request->query(
+            'org_id',
+            config('tempo.default_org_id')
+        );
+
+        if (! DB::table('y_orgs')->where('id', $orgId)->exists()) {
+            return response()->json([
+                'error' => 'organization_not_found',
+                'message' => 'Organisation introuvable.',
+            ], 404);
+        }
+
+        $supplier = DB::table('y_suppliers')
+            ->select(['id', 'name'])
+            ->where('id', $supplierId)
+            ->where('org_id', $orgId)
+            ->first();
+
+        if (! $supplier) {
+            return response()->json([
+                'error' => 'supplier_not_found',
+                'message' => 'Fournisseur introuvable.',
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:pdf', 'max:10240'],
+            'profile_id' => ['nullable', 'string', 'max:100'],
+            'catalog_name' => ['required', 'string', 'max:160'],
+        ]);
+
+        $file = $validated['file'];
+        try {
+            $profile = $profiles->resolve($validated['profile_id'] ?? null);
+        } catch (InvalidArgumentException) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'catalog_parsing_profile_not_found',
+                'message' => 'Le profil de lecture du catalogue est introuvable.',
+            ], 422);
+        }
+
+        try {
+            $pages = $extractor->extract($file->getRealPath());
+        } catch (RuntimeException) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'pdf_extraction_failed',
+                'message' => 'Le PDF n’a pas pu être lu.',
+            ], 422);
+        }
+
+        try {
+            $parsed = $parser->parse($pages, $file->getClientOriginalName(), $profile);
+        } catch (RuntimeException) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'catalog_parsing_profile_invalid',
+                'message' => 'Le profil de lecture du catalogue est invalide.',
+            ], 422);
+        }
+
+        $payload = [
+            'schema_version' => 1,
+            'catalog' => [
+                'name' => $validated['catalog_name'],
+                'effective_from' => $parsed['document']['effective_from'] ?? null,
+                'source_filename' => $parsed['document']['source_filename']
+                    ?? $file->getClientOriginalName(),
+            ],
+            'categories' => $parsed['categories'] ?? [],
+            'items' => $parsed['items'] ?? [],
+        ];
+        $analysis = $this->analyzeImport($payload, $orgId, $supplierId);
+
+        return response()->json([
+            'ok' => true,
+            'schema_version' => 1,
+            'supplier' => $this->supplierResponse($supplier),
+            'source_document' => $parsed['document'] ?? [],
+            'parser_summary' => $parsed['parser_summary'] ?? [],
+            'parser_warnings' => $parsed['parser_warnings'] ?? [],
+            'unparsed_rows' => $parsed['unparsed_rows'] ?? [],
+            ...$analysis,
+        ]);
+    }
+
     public function preview(Request $request, int $supplierId): JsonResponse
     {
         $orgId = (int) $request->query(
