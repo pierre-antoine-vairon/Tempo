@@ -58,6 +58,7 @@ Route::prefix('purchasing')
         Route::post('/suppliers/{supplierId}/catalog-imports/preview', 'preview');
         Route::post('/suppliers/{supplierId}/catalog-imports/preview-pdf', 'previewPdf');
         Route::post('/suppliers/{supplierId}/catalog-imports/commit', 'commit');
+        Route::post('/suppliers/{supplierId}/catalog-imports/commit-pdf', 'commitPdf');
     });
 
 Route::prefix('purchasing')

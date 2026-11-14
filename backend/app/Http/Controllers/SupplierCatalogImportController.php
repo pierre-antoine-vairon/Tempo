@@ -146,6 +146,166 @@ class SupplierCatalogImportController extends Controller
         ]);
     }
 
+    public function commitPdf(
+        Request $request,
+        int $supplierId,
+        PdfTextExtractor $extractor,
+        CatalogParsingProfileRegistry $profiles,
+        SupplierCatalogParser $parser
+    ): JsonResponse {
+        $orgId = (int) $request->query(
+            'org_id',
+            config('tempo.default_org_id')
+        );
+
+        if (! DB::table('y_orgs')->where('id', $orgId)->exists()) {
+            return response()->json([
+                'error' => 'organization_not_found',
+                'message' => 'Organisation introuvable.',
+            ], 404);
+        }
+
+        $supplier = DB::table('y_suppliers')
+            ->select(['id', 'name'])
+            ->where('id', $supplierId)
+            ->where('org_id', $orgId)
+            ->first();
+
+        if (! $supplier) {
+            return response()->json([
+                'error' => 'supplier_not_found',
+                'message' => 'Fournisseur introuvable.',
+            ], 404);
+        }
+
+        $validated = $request->validate([
+            'file' => ['required', 'file', 'mimes:pdf', 'max:10240'],
+            'profile_id' => ['nullable', 'string', 'max:100'],
+            'catalog_name' => ['required', 'string', 'max:160'],
+            'confirm_parser_warnings' => ['nullable', function (string $attribute, mixed $value, $fail) {
+                if (! in_array($value, [true, false, 1, 0, '1', '0', 'true', 'false'], true)) {
+                    $fail('La confirmation des warnings parser doit être un booléen.');
+                }
+            }],
+            'confirm_warnings' => ['nullable', function (string $attribute, mixed $value, $fail) {
+                if (! in_array($value, [true, false, 1, 0, '1', '0', 'true', 'false'], true)) {
+                    $fail('La confirmation des warnings doit être un booléen.');
+                }
+            }],
+        ]);
+
+        $file = $validated['file'];
+        try {
+            $profile = $profiles->resolve($validated['profile_id'] ?? null);
+        } catch (InvalidArgumentException) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'catalog_parsing_profile_not_found',
+                'message' => 'Le profil de lecture du catalogue est introuvable.',
+            ], 422);
+        }
+
+        try {
+            $pages = $extractor->extract($file->getRealPath());
+        } catch (RuntimeException) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'pdf_extraction_failed',
+                'message' => 'Le PDF n’a pas pu être lu.',
+            ], 422);
+        }
+
+        try {
+            $parsed = $parser->parse($pages, $file->getClientOriginalName(), $profile);
+        } catch (RuntimeException) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'catalog_parsing_profile_invalid',
+                'message' => 'Le profil de lecture du catalogue est invalide.',
+            ], 422);
+        }
+
+        $payload = [
+            'schema_version' => 1,
+            'catalog' => [
+                'name' => $validated['catalog_name'],
+                'effective_from' => $parsed['document']['effective_from'] ?? null,
+                'source_filename' => $parsed['document']['source_filename']
+                    ?? $file->getClientOriginalName(),
+            ],
+            'categories' => $parsed['categories'] ?? [],
+            'items' => $parsed['items'] ?? [],
+        ];
+        $confirmParserWarnings = $this->confirmed($validated['confirm_parser_warnings'] ?? false);
+        $confirmWarnings = $this->confirmed($validated['confirm_warnings'] ?? false);
+        $parserWarnings = $parsed['parser_warnings'] ?? [];
+        $analysis = $this->analyzeImport($payload, $orgId, $supplierId);
+
+        if ($this->analysisHasErrors($analysis)) {
+            return $this->analysisFailure('catalog_import_invalid', 'Le catalogue contient des erreurs bloquantes.', $analysis, $supplier);
+        }
+
+        if ($parserWarnings !== [] && ! $confirmParserWarnings) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'parser_warnings_confirmation_required',
+                'message' => 'Les warnings de lecture du PDF doivent être confirmés avant l’import.',
+                'supplier' => $this->supplierResponse($supplier),
+                'source_document' => $parsed['document'] ?? [],
+                'parser_summary' => $parsed['parser_summary'] ?? [],
+                'parser_warnings' => $parserWarnings,
+                'unparsed_rows' => $parsed['unparsed_rows'] ?? [],
+                'analysis' => $analysis,
+            ], 422);
+        }
+
+        if (! $confirmWarnings && $this->analysisHasWarnings($analysis)) {
+            return $this->analysisFailure('warnings_confirmation_required', 'Les warnings doivent être confirmés avant l’import.', $analysis, $supplier);
+        }
+
+        try {
+            $result = DB::transaction(function () use (
+                $payload,
+                $orgId,
+                $supplierId,
+                $supplier,
+                $confirmWarnings
+            ) {
+                $analysis = $this->analyzeImport($payload, $orgId, $supplierId);
+                if ($this->analysisHasErrors($analysis)) {
+                    return ['blocked' => true, 'analysis' => $analysis, 'supplier' => $supplier];
+                }
+                if (! $confirmWarnings && $this->analysisHasWarnings($analysis)) {
+                    return ['warnings_blocked' => true, 'analysis' => $analysis, 'supplier' => $supplier];
+                }
+
+                return $this->persistImport($analysis, $orgId, $supplierId, $supplier);
+            });
+        } catch (QueryException $exception) {
+            if (isset($exception->errorInfo[1]) && (int) $exception->errorInfo[1] === 1062) {
+                return response()->json([
+                    'error' => 'catalog_import_concurrent_change',
+                    'message' => 'Les données ont changé pendant l’import. Relancez la prévisualisation.',
+                ], 409);
+            }
+
+            throw $exception;
+        }
+
+        if (isset($result['blocked'])) {
+            return $this->analysisFailure('catalog_import_invalid', 'Le catalogue contient des erreurs bloquantes.', $result['analysis'], $supplier);
+        }
+        if (isset($result['warnings_blocked'])) {
+            return $this->analysisFailure('warnings_confirmation_required', 'Les warnings doivent être confirmés avant l’import.', $result['analysis'], $supplier);
+        }
+
+        return response()->json([
+            ...$result,
+            'source_document' => $parsed['document'] ?? [],
+            'parser_summary' => $parsed['parser_summary'] ?? [],
+        ], 201);
+    }
+
     public function commit(Request $request, int $supplierId): JsonResponse
     {
         $orgId = (int) $request->query('org_id', config('tempo.default_org_id'));
@@ -516,6 +676,11 @@ class SupplierCatalogImportController extends Controller
             ) || collect($analysis['items'])->contains(
                 fn (array $item) => $item['warnings'] !== []
             );
+    }
+
+    private function confirmed(mixed $value): bool
+    {
+        return in_array($value, [true, 1, '1', 'true'], true);
     }
 
     /** @param array<string, mixed> $analysis */
