@@ -229,6 +229,133 @@ class SupplierCatalogPdfPreviewTest extends TestCase
         ])->assertStatus(404)->assertJson(['error' => 'supplier_not_found']);
     }
 
+    public function test_it_batches_new_items_and_prices_while_reusing_existing_records(): void
+    {
+        DB::table('y_supplier_catalogs')->insert([
+            'id' => 1,
+            'org_id' => 1,
+            'supplier_id' => 10,
+            'name' => 'Catalogue métier',
+            'effective_from' => '2026-01-28',
+        ]);
+        DB::table('y_supplier_categories')->insert([
+            'id' => 1,
+            'org_id' => 1,
+            'supplier_id' => 10,
+            'name' => 'Épicerie',
+            'source_path' => 'Épicerie',
+            'is_active' => true,
+        ]);
+
+        $items = [];
+        foreach (range(1, 3) as $index) {
+            $sku = sprintf('EXISTING-%03d', $index);
+            $itemId = DB::table('y_supplier_items')->insertGetId([
+                'org_id' => 1,
+                'supplier_id' => 10,
+                'supplier_category_id' => 1,
+                'supplier_sku' => $sku,
+                'name' => "Article {$index}",
+                'brand' => null,
+                'purchase_unit_label' => 'Carton',
+                'pack_label' => 'Carton 6 pcs',
+                'is_active' => true,
+            ]);
+            DB::table('y_supplier_item_prices')->insert([
+                'org_id' => 1,
+                'supplier_item_id' => $itemId,
+                'site_id' => null,
+                'supplier_catalog_id' => 1,
+                'price_excl_tax' => '12.3400',
+                'currency_code' => 'EUR',
+                'effective_from' => '2026-01-28',
+            ]);
+            $items[] = $this->parsedItem($sku, "Article {$index}");
+        }
+
+        foreach (range(1, 227) as $index) {
+            $items[] = $this->parsedItem(
+                sprintf('NEW-%03d', $index),
+                "Nouvel article {$index}"
+            );
+        }
+
+        $this->mockPdfPipeline($this->parsedDocumentWithItems($items, []));
+
+        $response = $this->commitPdf()->assertCreated();
+
+        $response
+            ->assertJsonPath('catalog.operation', 'use_existing_catalog')
+            ->assertJsonPath('summary.catalogs_created', 0)
+            ->assertJsonPath('summary.categories_created', 0)
+            ->assertJsonPath('summary.categories_reused', 1)
+            ->assertJsonPath('summary.items_created', 227)
+            ->assertJsonPath('summary.items_reused', 3)
+            ->assertJsonPath('summary.prices_created', 227)
+            ->assertJsonPath('summary.prices_reused', 3);
+
+        $mappings = $response->json('items');
+        $this->assertCount(230, $mappings);
+        $this->assertCount(230, collect($mappings)->pluck('id')->unique());
+        $this->assertCount(230, collect($mappings)->pluck('price_id')->unique());
+        $this->assertBusinessRecordCounts(1, 1, 230, 230);
+    }
+
+    public function test_it_creates_a_price_for_an_existing_item_without_a_price_at_the_catalog_date(): void
+    {
+        DB::table('y_supplier_catalogs')->insert([
+            'id' => 1,
+            'org_id' => 1,
+            'supplier_id' => 10,
+            'name' => 'Catalogue métier',
+            'effective_from' => '2026-01-28',
+        ]);
+        DB::table('y_supplier_categories')->insert([
+            'id' => 1,
+            'org_id' => 1,
+            'supplier_id' => 10,
+            'name' => 'Épicerie',
+            'source_path' => 'Épicerie',
+            'is_active' => true,
+        ]);
+        $existingItemId = DB::table('y_supplier_items')->insertGetId([
+            'org_id' => 1,
+            'supplier_id' => 10,
+            'supplier_category_id' => 1,
+            'supplier_sku' => 'EXISTING-PRICE-001',
+            'name' => 'Article existant sans prix',
+            'brand' => null,
+            'purchase_unit_label' => 'Carton',
+            'pack_label' => 'Carton 6 pcs',
+            'is_active' => true,
+        ]);
+
+        $this->mockPdfPipeline($this->parsedDocumentWithItems([
+            $this->parsedItem('EXISTING-PRICE-001', 'Article existant sans prix'),
+        ], []));
+
+        $response = $this->commitPdf()->assertCreated();
+
+        $response
+            ->assertJsonPath('summary.items_created', 0)
+            ->assertJsonPath('summary.items_reused', 1)
+            ->assertJsonPath('summary.prices_created', 1)
+            ->assertJsonPath('summary.prices_reused', 0);
+
+        $this->assertBusinessRecordCounts(1, 1, 1, 1);
+
+        $createdPrice = DB::table('y_supplier_item_prices')
+            ->where('supplier_item_id', $existingItemId)
+            ->whereNull('site_id')
+            ->where('effective_from', '2026-01-28')
+            ->first();
+        $mapping = $response->json('items.0');
+
+        $this->assertNotNull($createdPrice);
+        $this->assertSame((int) $existingItemId, $mapping['id']);
+        $this->assertSame((int) $createdPrice->id, $mapping['price_id']);
+    }
+
     private function previewPdf(array $input)
     {
         return $this->post('/api/purchasing/suppliers/10/catalog-imports/preview-pdf?org_id=1', [
@@ -303,6 +430,46 @@ class SupplierCatalogPdfPreviewTest extends TestCase
             'parser_summary' => ['items_parsed' => 1],
             'parser_warnings' => [['code' => 'category_ambiguous']],
             'unparsed_rows' => [['code' => 'unparsed_text_block']],
+        ];
+    }
+
+    /** @param array<int, array<string, mixed>> $items */
+    private function parsedDocumentWithItems(array $items, array $parserWarnings): array
+    {
+        return [
+            'document' => [
+                'supplier_label' => 'Fournisseur PDF',
+                'catalog_label' => 'Libellé PDF',
+                'effective_from' => '2026-01-28',
+                'source_filename' => 'catalog.pdf',
+            ],
+            'categories' => [[
+                'client_key' => 'category-epicerie',
+                'name' => 'Épicerie',
+                'source_path' => 'Épicerie',
+                'parent_source_path' => null,
+            ]],
+            'items' => $items,
+            'parser_summary' => ['items_parsed' => count($items)],
+            'parser_warnings' => $parserWarnings,
+            'unparsed_rows' => [],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function parsedItem(string $sku, string $name): array
+    {
+        return [
+            'client_key' => 'sku-'.$sku,
+            'source' => ['row' => null, 'page' => 1, 'sheet' => null, 'raw_label' => $name],
+            'category_source_path' => 'Épicerie',
+            'supplier_sku' => $sku,
+            'name' => $name,
+            'brand' => null,
+            'purchase_unit_label' => 'Carton',
+            'pack_label' => 'Carton 6 pcs',
+            'price_excl_tax' => '12.3400',
+            'currency_code' => 'EUR',
         ];
     }
 }

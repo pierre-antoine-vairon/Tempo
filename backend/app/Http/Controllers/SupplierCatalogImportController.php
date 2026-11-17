@@ -575,39 +575,74 @@ class SupplierCatalogImportController extends Controller
         $itemsReused = 0;
         $pricesCreated = 0;
         $pricesReused = 0;
-        $itemMappings = [];
-
+        $newItemRows = [];
+        $newItemSkus = [];
         foreach ($analysis['items'] as $item) {
-            $itemId = $item['resolved_supplier_item_id'];
-            if ($item['operation'] === 'create_item') {
-                $categoryId = $item['category_source_path'] === null
-                    ? null
-                    : $categoryIds[$this->key($item['category_source_path'])];
-                $itemId = DB::table('y_supplier_items')->insertGetId([
-                    'org_id' => $orgId,
-                    'supplier_id' => $supplierId,
-                    'material_id' => null,
-                    'supplier_category_id' => $categoryId,
-                    'name' => $item['name'],
-                    'supplier_sku' => $item['supplier_sku'],
-                    'brand' => $item['brand'],
-                    'purchase_unit_label' => $item['purchase_unit_label'],
-                    'pack_label' => $item['pack_label'],
-                    'quantity_in_reference_unit' => null,
-                    'is_active' => 1,
-                    'created_by' => null,
-                    'created_at' => $now,
-                    'updated_by' => null,
-                    'updated_at' => $now,
-                ]);
-                $itemsCreated++;
-            } else {
+            if ($item['operation'] !== 'create_item') {
                 $itemsReused++;
+
+                continue;
             }
 
-            $priceId = $item['resolved_supplier_item_price_id'];
+            $categoryId = $item['category_source_path'] === null
+                ? null
+                : $categoryIds[$this->key($item['category_source_path'])];
+            $newItemRows[] = [
+                'org_id' => $orgId,
+                'supplier_id' => $supplierId,
+                'material_id' => null,
+                'supplier_category_id' => $categoryId,
+                'name' => $item['name'],
+                'supplier_sku' => $item['supplier_sku'],
+                'brand' => $item['brand'],
+                'purchase_unit_label' => $item['purchase_unit_label'],
+                'pack_label' => $item['pack_label'],
+                'quantity_in_reference_unit' => null,
+                'is_active' => 1,
+                'created_by' => null,
+                'created_at' => $now,
+                'updated_by' => null,
+                'updated_at' => $now,
+            ];
+            $newItemSkus[] = $item['supplier_sku'];
+        }
+
+        foreach (array_chunk($newItemRows, 100) as $itemRows) {
+            DB::table('y_supplier_items')->insert($itemRows);
+        }
+
+        $createdItemIds = [];
+        if ($newItemSkus !== []) {
+            $createdItemIds = DB::table('y_supplier_items')
+                ->select(['id', 'supplier_sku'])
+                ->where('org_id', $orgId)
+                ->where('supplier_id', $supplierId)
+                ->whereIn('supplier_sku', $newItemSkus)
+                ->get()
+                ->mapWithKeys(fn ($item) => [$this->key($item->supplier_sku) => (int) $item->id])
+                ->all();
+            $itemsCreated = count($newItemRows);
+        }
+
+        $itemIds = [];
+        foreach ($analysis['items'] as $item) {
+            $itemId = $item['operation'] === 'create_item'
+                ? ($createdItemIds[$this->key($item['supplier_sku'])] ?? null)
+                : $item['resolved_supplier_item_id'];
+
+            if ($itemId === null) {
+                throw new \LogicException('Les identifiants des articles fournisseur créés ne peuvent pas être résolus.');
+            }
+
+            $itemIds[$item['client_key']] = (int) $itemId;
+        }
+
+        $newPriceRows = [];
+        $newPriceItemIds = [];
+        foreach ($analysis['items'] as $item) {
             if ($item['price_operation'] === 'create_price') {
-                $priceId = DB::table('y_supplier_item_prices')->insertGetId([
+                $itemId = $itemIds[$item['client_key']];
+                $newPriceRows[] = [
                     'org_id' => $orgId,
                     'supplier_item_id' => $itemId,
                     'site_id' => null,
@@ -619,10 +654,41 @@ class SupplierCatalogImportController extends Controller
                     'created_at' => $now,
                     'updated_by' => null,
                     'updated_at' => $now,
-                ]);
-                $pricesCreated++;
+                ];
+                $newPriceItemIds[] = $itemId;
             } else {
                 $pricesReused++;
+            }
+        }
+
+        foreach (array_chunk($newPriceRows, 100) as $priceRows) {
+            DB::table('y_supplier_item_prices')->insert($priceRows);
+        }
+
+        $createdPriceIds = [];
+        if ($newPriceItemIds !== []) {
+            $createdPriceIds = DB::table('y_supplier_item_prices')
+                ->select(['id', 'supplier_item_id'])
+                ->where('org_id', $orgId)
+                ->whereIn('supplier_item_id', $newPriceItemIds)
+                ->whereNull('site_id')
+                ->where('effective_from', $catalog['effective_from'])
+                ->where('supplier_catalog_id', $catalogId)
+                ->get()
+                ->mapWithKeys(fn ($price) => [(int) $price->supplier_item_id => (int) $price->id])
+                ->all();
+            $pricesCreated = count($newPriceRows);
+        }
+
+        $itemMappings = [];
+        foreach ($analysis['items'] as $item) {
+            $itemId = $itemIds[$item['client_key']];
+            $priceId = $item['price_operation'] === 'create_price'
+                ? ($createdPriceIds[$itemId] ?? null)
+                : $item['resolved_supplier_item_price_id'];
+
+            if ($priceId === null) {
+                throw new \LogicException('Les identifiants des prix fournisseur créés ne peuvent pas être résolus.');
             }
 
             $itemMappings[] = [
